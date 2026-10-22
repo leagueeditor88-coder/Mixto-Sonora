@@ -1,8 +1,0 @@
-Mixto-Sonora/
-│   ├── app/
-│   │   └── src/
-│   │       ├── main/
-│   │       │   ├── java/com/example/automix/
-│   │       │   ├── res/values/
-│   │       │   ├── res/drawable/
-│   │       │   └── assets/sonora/  (se genera d
