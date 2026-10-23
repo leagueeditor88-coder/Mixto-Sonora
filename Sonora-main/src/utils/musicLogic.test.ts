@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanMusicQuery, enrichGenreProfile, calculateConfidence } from './musicLogic.js';
+import { cleanMusicQuery, enrichGenreProfile, calculateConfidence, resolveGenreClassification } from './musicLogic.js';
 
 test('cleanMusicQuery handles the exact user example with prompt text', () => {
   const result = cleanMusicQuery(' j Balvin - azul determinar genero');
@@ -36,7 +36,7 @@ test('enrichGenreProfile separates Bachata from lazy Tropical/Latino umbrella la
 test('enrichGenreProfile separates Salsa from lazy Tropical label', () => {
   const profile = enrichGenreProfile('Tropical', ['tropical'], 'hector lavoe periodico de ayer');
   assert.match(profile.primaryGenre, /Salsa/);
-  assert.match(profile.typicalRhythm, /Clave/);
+  assert.match(profile.typicalRhythm, /clave/i);
 });
 
 test('enrichGenreProfile classifies Corridos Tumbados instead of generic Latino', () => {
@@ -45,9 +45,9 @@ test('enrichGenreProfile classifies Corridos Tumbados instead of generic Latino'
   assert.match(profile.instruments.join(' '), /Docerola/);
 });
 
-test('enrichGenreProfile classifies Rock en Español instead of generic Latino', () => {
-  const profile = enrichGenreProfile('Latino', ['rock'], 'soda stereo de musica ligera');
-  assert.match(profile.primaryGenre, /Rock en Español/);
+test('enrichGenreProfile uses explicit Rock evidence instead of an artist-based guess', () => {
+  const profile = enrichGenreProfile('Latino', ['rock'], 'de musica ligera');
+  assert.equal(profile.primaryGenre, 'Rock');
 });
 
 test('enrichGenreProfile classifies Cumbia accurately', () => {
@@ -65,4 +65,24 @@ test('enrichGenreProfile detects Reggaetón for J Balvin Azul', () => {
 test('calculateConfidence calculates score correctly', () => {
   const fullScore = calculateConfidence(true, true, true, true);
   assert.ok(fullScore >= 95);
+});
+
+
+test('cleanMusicQuery parses a quoted title before the artist and removes promotional descriptors', () => {
+  const result = cleanMusicQuery('“Go Beyond (HONOR Brand Song)” — Andy Love');
+  assert.equal(result.detectedTitle?.toLowerCase(), 'go beyond');
+  assert.equal(result.detectedArtist?.toLowerCase(), 'andy love');
+  assert.equal(result.cleaned, 'Andy Love - Go Beyond');
+});
+
+test('genre classification keeps Pop as the main family when Electropop is a supported subgenre', () => {
+  const result = resolveGenreClassification('Pop', ['Electropop'], 'Electropop', ['Dance-pop']);
+  assert.equal(result.primaryGenre, 'Pop');
+  assert.ok(result.subgenres.some((genre) => /electropop/i.test(genre)));
+});
+
+test('conflicting AI genre does not blindly replace a catalog genre', () => {
+  const result = resolveGenreClassification('Pop', [], 'Hip-Hop/Rap', ['Trap']);
+  assert.equal(result.primaryGenre, 'Pop');
+  assert.ok(!result.subgenres.includes('Trap'));
 });

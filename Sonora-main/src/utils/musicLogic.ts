@@ -57,68 +57,173 @@ const NOISE_PHRASES: RegExp[] = [
  * - Extrae el artista y el título limpios.
  */
 export function cleanMusicQuery(input: string): ParsedQuery {
-  if (!input) {
-    return { raw: '', cleaned: '' };
-  }
+  if (!input) return { raw: '', cleaned: '' };
 
   const raw = input.trim();
-  let cleaned = raw;
+  let text = raw;
 
-  // 1. Quitar extensiones de archivo de audio
-  cleaned = cleaned.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|wma)$/i, '');
-
-  // 2. Quitar prefijos numéricos de pista (01. , 01 - , Track 01 )
-  cleaned = cleaned.replace(/^(track\s*)?\d+[\s._-]+/i, '');
-
-  // 3. Quitar expresiones de año para que no interfieran en la búsqueda
-  cleaned = cleaned.replace(/\(?\b(del\s+año|año|year)\s+\d{4}\b\)?/gi, '');
-  cleaned = cleaned.replace(/[\[(]\s*(19\d\d|20\d\d)\s*[\])]/g, '');
-
-  // 4. Quitar etiquetas de video / audio / remasterización
-  cleaned = cleaned.replace(
-    /[\[(]\s*(official\s*(music\s*)?video|video\s*oficial|audio\s*oficial|official\s*audio|letra|lyric(s)?(\s*video)?|en\s*vivo|live|remaster(ed)?(\s*\d{4})?|hd|hq|4k|visualizer|extended|clean|explicit|bonus\s*track|version\s*acustica|acustico)\s*[\])]/gi,
-    ''
-  );
-
-  // 5. Quitar frases conversacionales de ruido
-  for (const regex of NOISE_PHRASES) {
-    cleaned = cleaned.replace(regex, ' ');
+  // Si se pega una explicación completa, usar primero la línea que parece identificar la pista.
+  if (text.includes('\n')) {
+    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+    const trackLine = lines.find((line) =>
+      /[“"«].+?[”"»]/.test(line) || /\s[-–—:]\s/.test(line)
+    );
+    text = trackLine || lines[0] || text;
   }
 
-  // 6. Normalizar comillas y espacios consecutivos
-  cleaned = cleaned
-    .replace(/["'«»“”()[\]{}]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Limpieza que conserva los datos musicales, pero quita ruido de nombres de archivo.
+  text = text
+    .replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|wma)$/i, '')
+    .replace(/^(track\s*)?\d+[\s._-]+/i, '')
+    .replace(/\(?\b(del\s+año|año|year)\s+\d{4}\b\)?/gi, '')
+    .replace(/[\[(]\s*(19\d\d|20\d\d)\s*[\])]/g, '')
+    .replace(/[\[(]\s*(official\s*(music\s*)?video|video\s*oficial|audio\s*oficial|official\s*audio|letra|lyric(s)?(\s*video)?|en\s*vivo|live|remaster(ed)?(\s*\d{4})?|hd|hq|4k|visualizer|extended|clean|explicit|bonus\s*track|version\s*acustica|acustico)\s*[\])]/gi, '');
+
+  for (const regex of NOISE_PHRASES) text = text.replace(regex, ' ');
+  text = text.replace(/\s+/g, ' ').trim();
 
   let detectedArtist: string | undefined;
   let detectedTitle: string | undefined;
 
-  // Separadores comunes: " - ", " – ", " — ", " : "
-  const dashMatch = cleaned.match(/^([^-–—:]+?)\s*[-–—:]\s*(.+)$/);
-  if (dashMatch) {
-    let art = dashMatch[1].trim();
-    let tit = dashMatch[2].trim();
-    art = art.replace(/^(la|el|de|del)\s+/i, '').trim();
-    tit = tit.replace(/^(la|el|de|del)\s+/i, '').trim();
-    detectedArtist = art;
-    detectedTitle = tit;
+  // Título entre comillas seguido del artista: “Título” — Artista. Tolera comillas tipográficas mixtas.
+  const quotedTitleFirst = text.match(/^[“"«](.+?)[”"»]?\s*[-–—:]\s*(.+)$/);
+  const quotedTitleLast = text.match(/^(.+?)\s*[-–—:]\s*[“"«](.+?)[”"»]?$/);
+  if (quotedTitleFirst) {
+    detectedTitle = quotedTitleFirst[1].trim();
+    detectedArtist = quotedTitleFirst[2].trim();
+  } else if (quotedTitleLast) {
+    detectedArtist = quotedTitleLast[1].trim();
+    detectedTitle = quotedTitleLast[2].trim();
   } else {
-    const deMatch = cleaned.match(/^(.+?)\s+de\s+(.+)$/i);
-    if (deMatch) {
-      let tit = deMatch[1].trim().replace(/^(la|el)\s+/i, '');
-      let art = deMatch[2].trim().replace(/^(la|el)\s+/i, '');
-      detectedTitle = tit;
-      detectedArtist = art;
+    const dashMatch = text.match(/^(.+?)\s+[-–—:]\s+(.+)$/);
+    if (dashMatch) {
+      // Sin comillas, se conserva el formato habitual «Artista - Título».
+      detectedArtist = dashMatch[1].trim();
+      detectedTitle = dashMatch[2].trim();
+    } else {
+      const deMatch = text.match(/^(.+?)\s+de\s+(.+)$/i);
+      if (deMatch) {
+        detectedTitle = deMatch[1].trim();
+        detectedArtist = deMatch[2].trim();
+      }
     }
   }
 
+  const cleanPart = (value: string | undefined) => (value || '')
+    .replace(/\s*\((HONOR\s+Brand\s+Song|Brand\s+Song|Official\s+Video|Audio\s+Oficial|Lyric\s+Video|Soundtrack|Video\s+Oficial|Tema\s+Oficial|Comercial|Campaign\s+Song)\)/gi, '')
+    .replace(/["'«»“”()[\]{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  detectedTitle = cleanPart(detectedTitle);
+  detectedArtist = cleanPart(detectedArtist);
+
+  // If no reliable artist/title split was detected, retain a clean searchable phrase.
+  const cleaned = detectedArtist && detectedTitle
+    ? `${detectedArtist} - ${detectedTitle}`
+    : cleanPart(text) || raw;
+
   return {
     raw,
-    cleaned: cleaned || raw,
-    detectedArtist,
-    detectedTitle,
+    cleaned,
+    detectedArtist: detectedArtist || undefined,
+    detectedTitle: detectedTitle || undefined,
   };
+}
+
+/** Rejects search results whose artist/title do not match the requested track. */
+export function isRelevantMatch(
+  searchArtist: string | undefined,
+  searchTitle: string | undefined,
+  foundArtist: string | undefined,
+  foundTitle: string | undefined
+): boolean {
+  if (!foundArtist && !foundTitle) return false;
+  const normalize = (value: string) => value.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const matches = (wanted: string | undefined, found: string | undefined, minWordLength: number) => {
+    if (!wanted) return undefined;
+    if (!found) return false;
+    const w = normalize(wanted);
+    const f = normalize(found);
+    if (!w || !f) return false;
+    if (w === f || f.includes(w) || w.includes(f)) return true;
+    const words = w.split(' ').filter((word) => word.length >= minWordLength);
+    return words.length > 1 && words.every((word) => f.split(' ').includes(word));
+  };
+  const artistMatch = matches(searchArtist, foundArtist, 3);
+  const titleMatch = matches(searchTitle, foundTitle, 2);
+  if (searchArtist && searchTitle) return artistMatch === true && titleMatch === true;
+  return artistMatch === true || titleMatch === true;
+}
+
+/** Exact title-only fallback for tracks credited to a featured singer/composer differently across catalogs. */
+export function isExactTitleMatch(searchTitle: string | undefined, foundTitle: string | undefined): boolean {
+  if (!searchTitle || !foundTitle) return false;
+  const normalize = (value: string) => value.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return normalize(searchTitle) === normalize(foundTitle);
+}
+
+/** Normalizes genre labels so broad families and their subgenres can be compared. */
+export function genreFamily(label: string): string {
+  const value = (label || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9+#/ ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  if (/electropop|electro pop|dance pop|synth pop|indie pop|power pop|art pop|teen pop|pop rock|pop music|^pop$/.test(value)) return 'Pop';
+  if (/hip hop|hip-hop|rap|trap/.test(value)) return 'Hip-Hop/Rap';
+  if (/reggaeton|regueton|dembow/.test(value)) return 'Reggaetón';
+  if (/bachata/.test(value)) return 'Bachata';
+  if (/salsa|timba/.test(value)) return 'Salsa';
+  if (/cumbia/.test(value)) return 'Cumbia';
+  if (/rock|metal|punk|grunge/.test(value)) return 'Rock';
+  if (/electronic|electronica|house|techno|trance|edm|dance music/.test(value)) return 'Electrónica';
+  if (/country|bluegrass/.test(value)) return 'Country';
+  if (/jazz/.test(value)) return 'Jazz';
+  if (/classical|clasica|orchestral/.test(value)) return 'Clásica';
+  if (/r&b|rhythm and blues|soul/.test(value)) return 'R&B/Soul';
+  if (/folk|world music|musica del mundo/.test(value)) return 'Folk/World';
+  return label.trim();
+}
+
+/** Chooses a main genre and subgenres without letting a single conflicting AI label blindly replace catalog data. */
+export function resolveGenreClassification(
+  catalogGenre: string,
+  communityTags: string[] = [],
+  aiGenre?: string,
+  aiSubgenres: string[] = []
+): { primaryGenre: string; subgenres: string[] } {
+  const rawCatalog = (catalogGenre || '').trim();
+  const catalog = /^(music|unknown|various|n\/?a|not available)$/i.test(rawCatalog) ? '' : rawCatalog;
+  const tags = communityTags.map((tag) => tag.trim()).filter(Boolean);
+  const ai = (aiGenre || '').trim();
+  const family = genreFamily(catalog);
+  const aiFamily = genreFamily(ai);
+  const knownFamilies = new Set(['Pop', 'Hip-Hop/Rap', 'Reggaetón', 'Bachata', 'Salsa', 'Cumbia', 'Rock', 'Electrónica', 'Country', 'Jazz', 'Clásica', 'R&B/Soul', 'Folk/World']);
+  const usefulTags = tags.filter((tag) => {
+    const tagFamily = genreFamily(tag);
+    return knownFamilies.has(tagFamily) && (!family || tagFamily === family || tagFamily === aiFamily);
+  });
+
+  // A broad catalog label can be refined by corroborating tags/AI, but conflicting AI alone cannot overturn it.
+  let primaryGenre = catalog || ai || (usefulTags[0] ? genreFamily(usefulTags[0]) : '') || 'Desconocido';
+  if (!catalog && ai) primaryGenre = aiFamily || ai;
+  else if (catalog && family && ai && aiFamily === family) primaryGenre = family;
+  else if (catalog && family && ai && aiFamily && aiFamily !== family) {
+    const corroboratesCatalog = usefulTags.some((tag) => genreFamily(tag) === family);
+    if (!corroboratesCatalog) primaryGenre = catalog;
+  }
+
+  const aiAgreesWithPrimary = !aiFamily || aiFamily === genreFamily(primaryGenre);
+  const subgenres = [...new Set([
+    ...(aiAgreesWithPrimary ? aiSubgenres : []),
+    ...usefulTags,
+    ...(ai && aiAgreesWithPrimary && ai.toLowerCase() !== primaryGenre.toLowerCase() ? [ai] : []),
+  ].map((value) => value.trim()).filter((value) => value && value.toLowerCase() !== primaryGenre.toLowerCase()))].slice(0, 5);
+
+  return { primaryGenre, subgenres };
 }
 
 export function enrichGenreProfile(
@@ -128,7 +233,50 @@ export function enrichGenreProfile(
 ): GenreProfile {
   const normalizedGenre = (rawGenre || '').trim().toLowerCase();
   const lowerContext = context.toLowerCase();
-  const allText = `${normalizedGenre} ${extraTags.join(' ').toLowerCase()} ${lowerContext}`;
+  const genreEvidence = `${normalizedGenre} ${extraTags.join(' ').toLowerCase()}`;
+  const genericLabels = ['latino', 'latin', 'tropical', 'latin urban', 'musica latina', ''];
+  const hasSpecificCatalogGenre = !!normalizedGenre && !genericLabels.includes(normalizedGenre) && !/^(music|world music|popular music)$/.test(normalizedGenre);
+  const allText = hasSpecificCatalogGenre ? genreEvidence : `${genreEvidence} ${lowerContext}`;
+
+  // POP / ELECTROPOP: distinguish main family from supported electronic subgenres.
+  if (/\b(pop|pop music|popular music|electropop|electro pop|dance pop|synth pop|indie pop|power pop)\b/i.test(genreEvidence)) {
+    const supportedSubgenres = extraTags.filter((tag) => /electropop|electro pop|dance.?pop|synth.?pop|indie pop|power pop|pop rock/i.test(tag));
+    return {
+      primaryGenre: 'Pop',
+      subgenres: [...new Set(supportedSubgenres.length ? supportedSubgenres : ['Pop contemporáneo'])].slice(0, 4),
+      category: 'Música popular',
+      color: 'from-fuchsia-500 to-violet-600',
+      badgeBg: 'rgba(168, 85, 247, 0.15)',
+      badgeText: '#c084fc',
+      vibe: 'Variable según la canción y su producción',
+      typicalRhythm: 'Depende de la grabación; no se infiere únicamente por la etiqueta Pop',
+      tempoRange: 'No determinado por la etiqueta de catálogo',
+      instruments: [],
+      danceability: 'No determinada por la etiqueta de catálogo',
+      isLazyLabelRefined: false,
+      culturalLineage: 'Música popular contemporánea',
+    };
+  }
+
+  // ROCK: use explicit catalog/tag evidence; do not infer a subgenre from artist identity alone.
+  if (/\b(rock|metal|punk|grunge)\b/i.test(genreEvidence)) {
+    const supportedRockTags = extraTags.filter((tag) => /alternative rock|indie rock|hard rock|punk rock|rock en español|rock latino|progressive rock/i.test(tag));
+    return {
+      primaryGenre: /rock en español|rock latino/i.test(genreEvidence) ? 'Rock en Español' : 'Rock',
+      subgenres: [...new Set(supportedRockTags.length ? supportedRockTags : ['Rock contemporáneo'])].slice(0, 4),
+      category: 'Rock',
+      color: 'from-orange-500 to-red-600',
+      badgeBg: 'rgba(249, 115, 22, 0.15)',
+      badgeText: '#fb923c',
+      vibe: 'Variable según la canción y su producción',
+      typicalRhythm: 'No determinado por la etiqueta de catálogo',
+      tempoRange: 'No determinado por la etiqueta de catálogo',
+      instruments: [],
+      danceability: 'No determinada por la etiqueta de catálogo',
+      isLazyLabelRefined: false,
+      culturalLineage: 'Rock y sus distintas vertientes',
+    };
+  }
 
   // BACHATA
   if (
@@ -296,10 +444,11 @@ export function calculateConfidence(
   hasAi: boolean,
   titleExactMatch: boolean
 ): number {
-  let score = 75;
-  if (hasItunes) score += 12;
-  if (hasMusicBrainz) score += 8;
-  if (hasAi) score += 5;
-  if (titleExactMatch) score += 5;
+  // Es un índice heurístico de corroboración, no una probabilidad estadística.
+  let score = 40;
+  if (hasItunes) score += 25;
+  if (hasMusicBrainz) score += 15;
+  if (hasAi) score += 10;
+  if (titleExactMatch) score += 10;
   return Math.min(score, 99);
 }
