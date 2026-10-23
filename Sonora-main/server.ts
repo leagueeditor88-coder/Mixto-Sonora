@@ -14,6 +14,16 @@ async function startServer() {
   const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
+  // Permit calls from the Android WebView and hosted frontend. Restrict with CORS_ORIGIN in production.
+  app.use((req, res, next) => {
+    const allowedOrigin = process.env.CORS_ORIGIN || req.headers.origin || '*';
+    res.header('Access-Control-Allow-Origin', allowedOrigin);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
 
   // API endpoint: Detect single song genre
   app.get('/api/detect', async (req, res) => {
@@ -83,7 +93,31 @@ async function startServer() {
 
   // Health check
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', service: 'SonoraGenre API', timestamp: new Date().toISOString() });
+    // Expose provider availability without revealing secret values.
+    const providers = {
+      itunes: true,
+      musicBrainz: true,
+      deezer: true,
+      lastFm: Boolean(process.env.LASTFM_API_KEY),
+      discogs: Boolean(process.env.DISCOGS_TOKEN),
+      spotify: Boolean(process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET),
+      gemini: Boolean(process.env.GEMINI_API_KEY),
+    };
+    const requiredReady = providers.lastFm && providers.discogs && providers.spotify && providers.gemini;
+    const missing = [
+      ...(!providers.lastFm ? ['LASTFM_API_KEY'] : []),
+      ...(!providers.discogs ? ['DISCOGS_TOKEN'] : []),
+      ...(!providers.spotify ? ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET'] : []),
+      ...(!providers.gemini ? ['GEMINI_API_KEY'] : []),
+    ];
+    res.status(requiredReady ? 200 : 503).json({
+      status: requiredReady ? 'ok' : 'needs_configuration',
+      service: 'SonoraGenre API',
+      timestamp: new Date().toISOString(),
+      providers,
+      requiredProvidersReady: requiredReady,
+      missingRequiredEnvironmentVariables: missing,
+    });
   });
 
   // Vite middleware in dev or static files in production
