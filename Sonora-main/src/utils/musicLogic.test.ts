@@ -86,3 +86,16 @@ test('conflicting AI genre does not blindly replace a catalog genre', () => {
   assert.equal(result.primaryGenre, 'Pop');
   assert.ok(!result.subgenres.includes('Trap'));
 });
+
+
+test('cleanMusicQuery recovers title and artist from a noisy promotional filename in mixed order', () => {
+  const result = cleanMusicQuery('Go Beyond Andy (HONOR Brand .. 60 Andy Love');
+  assert.equal(result.detectedTitle?.toLowerCase(), 'go beyond');
+  assert.equal(result.detectedArtist?.toLowerCase(), 'andy love');
+  assert.equal(result.cleaned, 'Andy Love - Go Beyond');
+});
+
+test('resolveGenreClassification does not promote a broad Latino label as a specific genre', () => {
+  const result = resolveGenreClassification('Música Latina & Variada', [], undefined, []);
+  assert.equal(result.primaryGenre, 'Desconocido');
+});
