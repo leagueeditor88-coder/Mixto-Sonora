@@ -51,10 +51,14 @@ jobs:
           cp -r Sonora-main/dist/* mixto-Sonora/app/src/main/assets/sonora/
           echo "Verificando que el bundle incluye el puente de biblioteca Mixto..."
           test -f mixto-Sonora/app/src/main/assets/sonora/index.html
-          JS_BUNDLE=$(find mixto-Sonora/app/src/main/assets/sonora/assets -maxdepth 1 -type f -name '*.js' | head -n 1)
-          test -n "$JS_BUNDLE"
-          grep -q 'MixtoLibrary' "$JS_BUNDLE" || { echo "::error::El bundle no incluye el puente MixtoLibrary; no se publicará un APK con integración incompleta."; exit 1; }
-          grep -q '__mixtoPendingTrack' "$JS_BUNDLE" || { echo "::error::El bundle no incluye el enlace de canción seleccionada; no se publicará un APK con integración incompleta."; exit 1; }
+          JS_ASSETS="mixto-Sonora/app/src/main/assets/sonora/assets"
+          if ! find "$JS_ASSETS" -type f -name '*.js' -print -quit | grep -q .; then
+            echo "::error::No se encontraron archivos JavaScript compilados de Sonora."
+            exit 1
+          fi
+          # Vite puede repartir el código en varios chunks; buscar en todos, no solo en el primero.
+          grep -Rq 'MixtoLibrary' "$JS_ASSETS" || { echo "::error::El JavaScript compilado no contiene MixtoLibrary; comprobar Sonora-main/src/App.tsx y la configuración de build."; exit 1; }
+          grep -Rq '__mixtoPendingTrack' "$JS_ASSETS" || { echo "::error::El JavaScript compilado no contiene __mixtoPendingTrack; comprobar el enlace de canción seleccionada."; exit 1; }
           ls -la mixto-Sonora/app/src/main/assets/sonora/
 
       - name: Instalar Java JDK 17
