@@ -32,17 +32,19 @@ jobs:
       - name: Configurar Node.js y compilar Sonora Web
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Compilar interfaz web Sonora y sincronizar assets
         run: |
           echo "Compilando aplicación web Sonora..."
           cd Sonora-main
           npm ci || npm install
+          npm test
           npm run build
           cd ..
           echo "Copiando distribución web a los assets de Android..."
           mkdir -p mixto-Sonora/app/src/main/assets/sonora
+          rm -rf mixto-Sonora/app/src/main/assets/sonora/*
           cp -r Sonora-main/dist/* mixto-Sonora/app/src/main/assets/sonora/
           ls -la mixto-Sonora/app/src/main/assets/sonora/
 
