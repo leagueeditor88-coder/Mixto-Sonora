@@ -35,7 +35,10 @@ jobs:
           node-version: '22'
 
       - name: Compilar interfaz web Sonora y sincronizar assets
+        env:
+          VITE_SONORA_API_URL: ${{ vars.SONORA_API_URL }}
         run: |
+          if [ -n "$VITE_SONORA_API_URL" ]; then echo "Backend multi-fuente configurado."; else echo "AVISO: SONORA_API_URL no configurada; APK usará el respaldo limitado de iTunes."; fi
           echo "Compilando aplicación web Sonora..."
           cd Sonora-main
           npm ci || npm install
@@ -46,6 +49,12 @@ jobs:
           mkdir -p mixto-Sonora/app/src/main/assets/sonora
           rm -rf mixto-Sonora/app/src/main/assets/sonora/*
           cp -r Sonora-main/dist/* mixto-Sonora/app/src/main/assets/sonora/
+          echo "Verificando que el bundle incluye el puente de biblioteca Mixto..."
+          test -f mixto-Sonora/app/src/main/assets/sonora/index.html
+          JS_BUNDLE=$(find mixto-Sonora/app/src/main/assets/sonora/assets -maxdepth 1 -type f -name '*.js' | head -n 1)
+          test -n "$JS_BUNDLE"
+          grep -q 'MixtoLibrary' "$JS_BUNDLE" || { echo "::error::El bundle no incluye el puente MixtoLibrary; no se publicará un APK con integración incompleta."; exit 1; }
+          grep -q '__mixtoPendingTrack' "$JS_BUNDLE" || { echo "::error::El bundle no incluye el enlace de canción seleccionada; no se publicará un APK con integración incompleta."; exit 1; }
           ls -la mixto-Sonora/app/src/main/assets/sonora/
 
       - name: Instalar Java JDK 17
