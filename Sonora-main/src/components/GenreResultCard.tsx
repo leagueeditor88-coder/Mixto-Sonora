@@ -468,6 +468,16 @@ export const GenreResultCard: React.FC<GenreResultCardProps> = ({ result }) => {
                 <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
                   {src.description}
                 </p>
+                {src.url && (
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] text-sky-300 hover:text-sky-200 underline underline-offset-2 mb-3 break-all"
+                  >
+                    Consultar fuente web <ExternalLink className="w-3 h-3 shrink-0" />
+                  </a>
+                )}
               </div>
 
               <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
