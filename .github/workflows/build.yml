@@ -38,7 +38,11 @@ jobs:
         env:
           VITE_SONORA_API_URL: ${{ vars.SONORA_API_URL }}
         run: |
-          if [ -n "$VITE_SONORA_API_URL" ]; then echo "Backend multi-fuente configurado."; else echo "AVISO: SONORA_API_URL no configurada; APK usará el respaldo limitado de iTunes."; fi
+          if [ -z "$VITE_SONORA_API_URL" ]; then
+            echo "::error::SONORA_API_URL es obligatoria. Despliega primero el backend multi-fuente y configura la variable del repositorio."
+            exit 1
+          fi
+          echo "Backend multi-fuente configurado."
           echo "Compilando aplicación web Sonora..."
           cd Sonora-main
           npm ci || npm install
@@ -74,7 +78,9 @@ jobs:
 
       - name: Compilar APK Android
         working-directory: mixto-Sonora
-        run: gradle assembleDebug --stacktrace
+        env:
+          SONORA_API_URL: ${{ vars.SONORA_API_URL }}
+        run: gradle assembleDebug -PsonoraApiUrl="$SONORA_API_URL" --stacktrace
 
       - name: Mostrar APK generado
         run: |
