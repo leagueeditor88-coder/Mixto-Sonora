@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: mixto-sonora-api
+    runtime: node
+    rootDir: Sonora-main
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: LASTFM_API_KEY
+        sync: false
+      - key: DISCOGS_TOKEN
+        sync: false
+      - key: CORS_ORIGIN
+        value: '*'
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false

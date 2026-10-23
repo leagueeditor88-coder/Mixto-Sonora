@@ -1,0 +1,21 @@
+SONORA: FUENTES REALES Y LIMITACIONES
+
+La versión anterior no tenía una gama amplia activa: consultaba iTunes y MusicBrainz; Gemini solo se ejecutaba si GEMINI_API_KEY estaba configurada. La ruta alternativa de la app consultaba únicamente iTunes.
+
+Esta actualización añade al backend:
+- Apple iTunes: metadatos y género de catálogo (puede ser general).
+- MusicBrainz: metadatos y etiquetas comunitarias cuando estén disponibles.
+- Deezer: búsqueda de pista y etiquetas de género del álbum cuando la API las devuelva.
+- Last.fm: etiquetas de canción, requiere LASTFM_API_KEY.
+- Discogs: géneros/estilos de lanzamiento, requiere DISCOGS_TOKEN y no siempre describe una pista individual.
+- Spotify Web API: requiere SPOTIFY_CLIENT_ID y SPOTIFY_CLIENT_SECRET; las etiquetas son del artista, no necesariamente de la canción.
+- Gemini: refinamiento obligatorio de la evidencia, requiere GEMINI_API_KEY; no es análisis acústico directo.
+
+Audiomack NO está conectado: no se debe simular una fuente ni mostrar etiquetas atribuidas a Audiomack sin una integración autorizada. La API pública de Audiomack no se ha validado para esta función.
+
+IMPORTANTE PARA ANDROID
+El APK carga Sonora como recursos locales. Para consultar todas las fuentes, el backend debe estar desplegado y VITE_SONORA_API_URL debe apuntar a su URL HTTPS pública durante la compilación de Sonora. Sin esa URL, la app recurre a iTunes únicamente y debe indicarlo como fuente única.
+
+Despliegue sugerido: render.yaml en la raíz. En el servicio de backend configura obligatoriamente GEMINI_API_KEY, LASTFM_API_KEY, DISCOGS_TOKEN y las credenciales SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET. Si falta alguna, /api/health informa needs_configuration y la clasificación no se presenta como refinada. Después copia la URL HTTPS del servicio y configura el secreto/variable VITE_SONORA_API_URL al compilar Vite. En GitHub Actions usa el valor de la variable SONORA_API_URL como VITE_SONORA_API_URL.
+
+Las fuentes de etiquetas no tienen igual fiabilidad. iTunes y Deezer pueden ser generalistas; MusicBrainz/Last.fm/Discogs son colaborativas y pueden no tener datos. El sistema debe exponer las fuentes que respondieron y no inventar porcentajes de certeza.
