@@ -165,7 +165,7 @@ export default function App() {
                 ¿Qué género es esa canción?
               </h1>
               <p className="text-sm sm:text-base text-slate-400 max-w-2xl mx-auto leading-relaxed">
-                Clasificación acústica de alta precisión: identifica el género específico exacto (<strong className="text-pink-300 font-semibold">Bachata</strong>, <strong className="text-yellow-300 font-semibold">Salsa</strong>, <strong className="text-emerald-300 font-semibold">Cumbia</strong>, <strong className="text-orange-300 font-semibold">Corridos Tumbados</strong>, <strong className="text-purple-300 font-semibold">Reggaetón</strong>, <strong className="text-red-300 font-semibold">Rock en Español</strong>) superando las etiquetas genéricas o &ldquo;cajón de sastre&rdquo; como &ldquo;Latino&rdquo; o &ldquo;Tropical&rdquo;.
+                Clasificación musical contextual: identifica el género específico cuando las fuentes y etiquetas disponibles lo respaldan (<strong className="text-pink-300 font-semibold">Bachata</strong>, <strong className="text-yellow-300 font-semibold">Salsa</strong>, <strong className="text-emerald-300 font-semibold">Cumbia</strong>, <strong className="text-orange-300 font-semibold">Corridos Tumbados</strong>, <strong className="text-purple-300 font-semibold">Reggaetón</strong>, <strong className="text-red-300 font-semibold">Rock en Español</strong>) superando las etiquetas genéricas o &ldquo;cajón de sastre&rdquo; como &ldquo;Latino&rdquo; o &ldquo;Tropical&rdquo;.
               </p>
 
               {/* Search component */}
@@ -204,7 +204,7 @@ export default function App() {
                     Consultando catálogos de bases de datos externas...
                   </p>
                   <p className="text-xs text-slate-500">
-                    Cotejando iTunes API, MusicBrainz y taxonomía acústica
+                    Cotejando metadatos y etiquetas; las fuentes disponibles dependen de la conexión al backend
                   </p>
                 </div>
               </div>
@@ -255,7 +255,7 @@ export default function App() {
                     <Sparkles className="w-3.5 h-3.5 text-cyan-400" /> 3. Musicología & Acústica
                   </span>
                   <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Calcula subgéneros específicos (Dembow, Synthwave, Nu-Disco), tempo BPM, patrones de compás y compila la muestra oficial de 30 segundos.
+                    Combina etiquetas verificables y reglas de género. No afirma medir BPM ni analizar directamente el audio; si las fuentes discrepan, el resultado debe reflejar esa incertidumbre.
                   </p>
                 </div>
               </div>
@@ -293,11 +293,9 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4 text-slate-400 text-[11px]">
-            <span>Datos en tiempo real: Apple iTunes API</span>
+            <span>Fuentes según disponibilidad: iTunes, MusicBrainz y Deezer</span>
             <span>•</span>
-            <span>MusicBrainz Encyclopedia</span>
-            <span>•</span>
-            <span>Gemini AI Musicology</span>
+            <span>Last.fm, Discogs, Spotify y Gemini requieren configuración adicional</span>
           </div>
         </div>
       </footer>
