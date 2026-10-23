@@ -1,4 +1,4 @@
-import { cleanMusicQuery, enrichGenreProfile, calculateConfidence } from '../utils/musicLogic.js';
+import { cleanMusicQuery, enrichGenreProfile, calculateConfidence, isRelevantMatch, isExactTitleMatch, resolveGenreClassification, genreFamily } from '../utils/musicLogic.js';
 import type { GenreProfile } from '../utils/musicLogic.js';
 import { GoogleGenAI } from '@google/genai';
 
@@ -45,7 +45,7 @@ export interface GenreDetectionResult {
 /**
  * Queries Apple iTunes API for exact track metadata, genres, preview audio, and artwork.
  */
-async function queryItunes(searchTerm: string) {
+async function queryItunes(searchTerm: string, searchArtist?: string, searchTitle?: string) {
   try {
     const url = `https://itunes.apple.com/search?term=${encodeURIComponent(searchTerm)}&entity=song&limit=5`;
     const res = await fetch(url, {
@@ -55,6 +55,11 @@ async function queryItunes(searchTerm: string) {
     if (!res.ok) return null;
     const data = await res.json();
     if (data.resultCount > 0 && Array.isArray(data.results)) {
+      if (searchArtist || searchTitle) {
+        return data.results.find((result: any) => isRelevantMatch(searchArtist, searchTitle, result.artistName, result.trackName))
+          || data.results.find((result: any) => isExactTitleMatch(searchTitle, result.trackName))
+          || null;
+      }
       return data.results[0];
     }
   } catch (err) {
@@ -66,9 +71,9 @@ async function queryItunes(searchTerm: string) {
 /**
  * Queries MusicBrainz Open Music Encyclopedia for community genre tags and recording metadata.
  */
-async function queryMusicBrainz(searchTerm: string) {
+async function queryMusicBrainz(searchTerm: string, searchArtist?: string, searchTitle?: string) {
   try {
-    const url = `https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(searchTerm)}&fmt=json&limit=3`;
+    const url = `https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(searchTerm)}&fmt=json&limit=8`;
     const res = await fetch(url, {
       headers: {
         'Accept': 'application/json',
@@ -79,7 +84,11 @@ async function queryMusicBrainz(searchTerm: string) {
     if (!res.ok) return null;
     const data = await res.json();
     if (data.recordings && data.recordings.length > 0) {
-      const rec = data.recordings[0];
+      const rec = (searchArtist || searchTitle)
+        ? data.recordings.find((item: any) => isRelevantMatch(searchArtist, searchTitle, item['artist-credit']?.map((credit: any) => credit.name).join(' '), item.title))
+          || data.recordings.find((item: any) => isExactTitleMatch(searchTitle, item.title))
+        : data.recordings[0];
+      if (!rec) return null;
       const tags = (rec.tags || []).map((t: { name: string }) => t.name);
       return {
         title: rec.title,
@@ -104,15 +113,14 @@ async function queryGeminiMusicology(artist: string, title: string, baseGenre: s
 
   try {
     const ai = new GoogleGenAI();
-    const prompt = `Actúa como un musicólogo experto e historiador musical especializado en géneros hispanoamericanos y globales.
-Determina el género musical exacto, subgéneros, BPM estimado, instrumentación y contexto para la canción:
+    const prompt = `Actúa como un musicólogo experto. Clasifica con prudencia usando los metadatos disponibles. No tienes el archivo de audio: no afirmes haber medido BPM, escuchado instrumentos ni analizado acústicamente la grabación. Si no hay evidencia suficiente, indica un género principal amplio y subgéneros no confirmados.
+Determina el género musical más defendible, posibles subgéneros y contexto para la canción:
 Artista: "${artist}"
 Título: "${title}"
 Género base preliminar en catálogo: "${baseGenre}"
 
-REGLA CRÍTICA DE ESPECIFICIDAD:
-NUNCA utilices etiquetas genéricas o "cajón de sastre" como simplemente "Latin", "Latino", "Música Latina" o "Tropical". La industria comercial suele encasillar erróneamente toda la música en español bajo esos términos vagos.
-DEBES clasificarla en su género real y específico exacto:
+REGLA DE PRECISIÓN:
+No fuerces un subgénero específico sin evidencia. No uses etiquetas genéricas si los datos apoyan una categoría más precisa, pero tampoco inventes detalles. Separa el género principal de los subgéneros y declara la incertidumbre cuando corresponda. Clasifica la canción según evidencia disponible, no solo por el artista:
 - Si es ritmo con güira y requinto de amargue: "Bachata" (ej. Bachata Sensual, Bachata Tradicional).
 - Si es ritmo con clave, congas y metales: "Salsa" (ej. Salsa Brava, Salsa Romántica, Timba).
 - Si es ritmo con güiro/acordeón (chiki-chiki): "Cumbia" (ej. Cumbia Sonidera, Cumbia Villera, Cumbia Colombiana).
@@ -165,8 +173,8 @@ export async function detectSongGenre(rawQuery: string): Promise<GenreDetectionR
 
   // 1. External DB queries in parallel: iTunes & MusicBrainz
   const [itunesResult, mbResult] = await Promise.all([
-    queryItunes(searchTerm),
-    queryMusicBrainz(searchTerm),
+    queryItunes(searchTerm, parsed.detectedArtist, parsed.detectedTitle),
+    queryMusicBrainz(searchTerm, parsed.detectedArtist, parsed.detectedTitle),
   ]);
 
   const matchFound = !!(itunesResult || mbResult);
@@ -199,7 +207,11 @@ export async function detectSongGenre(rawQuery: string): Promise<GenreDetectionR
   const mbTags = mbResult?.tags || [];
 
   // Synthesize standard profile
-  const baseProfile = enrichGenreProfile(itunesGenre, mbTags, `${detectedArtist} ${detectedTitle} ${searchTerm}`);
+  const baseProfile = enrichGenreProfile(
+    itunesGenre,
+    mbTags,
+    (itunesGenre || mbTags.length > 0) ? detectedTitle : ''
+  );
 
   // 2. Query Gemini for deep musicology
   const aiAnalysis = await queryGeminiMusicology(detectedArtist, detectedTitle, itunesGenre || baseProfile.primaryGenre);
@@ -220,7 +232,7 @@ export async function detectSongGenre(rawQuery: string): Promise<GenreDetectionR
       name: 'Apple iTunes Music Catalog',
       badge: 'Base de Datos Oficial',
       genreReported: itunesResult.primaryGenreName || 'Latino / Urbano',
-      reliability: '98% (Metadatos de disquera oficial)',
+      reliability: 'Fuente de catálogo; el género puede ser amplio',
       tags: [itunesResult.primaryGenreName, ...(itunesResult.collectionArtistName ? [itunesResult.collectionArtistName] : [])].filter(Boolean),
       description: `Verificado en el catálogo global de Apple Music con ID de pista ${itunesResult.trackId}.`,
     });
@@ -231,7 +243,7 @@ export async function detectSongGenre(rawQuery: string): Promise<GenreDetectionR
       name: 'MusicBrainz Open Music Archive',
       badge: 'Enciclopedia Comunitaria Abierta',
       genreReported: mbTags.length > 0 ? mbTags.slice(0, 3).join(', ') : 'Música grabada indexada',
-      reliability: '92% (Validado por editores globales)',
+      reliability: mbTags.length > 0 ? 'Etiquetas comunitarias; corroboración variable' : 'Metadatos de grabación; sin etiquetas de género',
       tags: mbTags.length > 0 ? mbTags : ['recording', 'single', 'album'],
       description: `Entrada comunitaria validada con identificador abierto para "${mbResult.title}".`,
     });
@@ -242,7 +254,7 @@ export async function detectSongGenre(rawQuery: string): Promise<GenreDetectionR
       name: 'Gemini AI Musicologist Engine',
       badge: 'Análisis Acústico & Estilístico',
       genreReported: aiAnalysis.primaryGenre || baseProfile.primaryGenre,
-      reliability: '95% (Corroboración armónica y rítmica)',
+      reliability: 'Estimación textual por IA; no es análisis directo del audio',
       tags: aiAnalysis.subgenres || baseProfile.subgenres,
       description: aiAnalysis.historicalContext || 'Desglose detallado de compás, instrumentación y raíces de género.',
     });
@@ -254,15 +266,23 @@ export async function detectSongGenre(rawQuery: string): Promise<GenreDetectionR
       name: 'Motor Acústico Heurístico SonoraGenre',
       badge: 'Base de Datos Local',
       genreReported: baseProfile.primaryGenre,
-      reliability: '85%',
+      reliability: 'Baja; no se encontró corroboración externa',
       tags: baseProfile.subgenres,
-      description: 'Clasificación basada en patrones musicales, taxonomía de géneros y heurística de artistas.',
+      description: 'Estimación de respaldo sin coincidencia verificada en catálogos. No equivale a un análisis directo del audio.',
     });
   }
 
-  const primaryGenre = aiAnalysis?.primaryGenre || baseProfile.primaryGenre;
-  const subgenres = aiAnalysis?.subgenres || baseProfile.subgenres;
-  const category = aiAnalysis?.category || baseProfile.category;
+  const classification = resolveGenreClassification(
+    itunesGenre,
+    mbTags,
+    aiAnalysis?.primaryGenre,
+    aiAnalysis?.subgenres || []
+  );
+  const primaryGenre = classification.primaryGenre === 'Desconocido' ? baseProfile.primaryGenre : classification.primaryGenre;
+  const subgenres = classification.subgenres.length ? classification.subgenres : baseProfile.subgenres;
+  const category = aiAnalysis?.category && (!itunesGenre || !aiAnalysis?.primaryGenre || primaryGenre === genreFamily(aiAnalysis.primaryGenre))
+    ? aiAnalysis.category
+    : baseProfile.category;
 
   const musicalProfile = {
     ...baseProfile,
