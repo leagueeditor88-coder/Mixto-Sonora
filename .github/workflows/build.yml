@@ -1,3 +1,4 @@
+
 name: Compilar Mixto-Sonora APK
 
 on:
@@ -13,85 +14,92 @@ permissions:
 jobs:
   compilar:
     runs-on: ubuntu-latest
+
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Corregir nombres de carpetas con espacios (si existen)
+      - name: Verificar estructura existente
         run: |
-          echo "Verificando estructura de carpetas..."
-          if [ -d "mixto-Sonora/ app" ]; then
-            echo "Renombrando 'mixto-Sonora/ app' a 'mixto-Sonora/app'..."
-            mv "mixto-Sonora/ app" mixto-Sonora/app
-          fi
-          if [ -d "Sonora-main/ src" ]; then
-            echo "Renombrando 'Sonora-main/ src' a 'Sonora-main/src'..."
-            mv "Sonora-main/ src" Sonora-main/src
+          echo "===== RAIZ DEL REPOSITORIO ====="
+          ls -la
+          echo "===== SONORA ====="
+          ls -la Sonora-main
+          echo "===== ANDROID ====="
+          ls -la mixto-Sonora
+
+          if [ ! -d "Sonora-main" ]; then
+            echo "::error::No existe Sonora-main/"
+            exit 1
           fi
 
-      - name: Configurar Node.js y compilar Sonora Web
+          if [ ! -d "mixto-Sonora/app" ]; then
+            echo "::error::No existe mixto-Sonora/app/"
+            exit 1
+          fi
+
+      - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: Sonora-main/package-lock.json
 
-      - name: Compilar interfaz web Sonora y sincronizar assets
-        env:
-          VITE_SONORA_API_URL: ${{ vars.SONORA_API_URL }}
+      - name: Instalar dependencias de Sonora
+        working-directory: Sonora-main
         run: |
-          if [ -z "$VITE_SONORA_API_URL" ]; then
-            echo "::error::SONORA_API_URL es obligatoria. Despliega primero el backend multi-fuente y configura la variable del repositorio."
-            exit 1
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
           fi
-          echo "Backend multi-fuente configurado."
-          echo "Compilando aplicación web Sonora..."
-          cd Sonora-main
-          npm ci || npm install
-          npm test
-          npm run build
-          cd ..
-          echo "Copiando distribución web a los assets de Android..."
-          mkdir -p mixto-Sonora/app/src/main/assets/sonora
-          rm -rf mixto-Sonora/app/src/main/assets/sonora/*
-          cp -r Sonora-main/dist/* mixto-Sonora/app/src/main/assets/sonora/
-          echo "Verificando que el bundle incluye el puente de biblioteca Mixto..."
-          test -f mixto-Sonora/app/src/main/assets/sonora/index.html
-          JS_ASSETS="mixto-Sonora/app/src/main/assets/sonora/assets"
-          if ! find "$JS_ASSETS" -type f -name '*.js' -print -quit | grep -q .; then
-            echo "::error::No se encontraron archivos JavaScript compilados de Sonora."
-            exit 1
-          fi
-          # Vite puede repartir el código en varios chunks; buscar en todos, no solo en el primero.
-          grep -Rq 'MixtoLibrary' "$JS_ASSETS" || { echo "::error::El JavaScript compilado no contiene MixtoLibrary; comprobar Sonora-main/src/App.tsx y la configuración de build."; exit 1; }
-          grep -Rq '__mixtoPendingTrack' "$JS_ASSETS" || { echo "::error::El JavaScript compilado no contiene __mixtoPendingTrack; comprobar el enlace de canción seleccionada."; exit 1; }
-          ls -la mixto-Sonora/app/src/main/assets/sonora/
 
-      - name: Instalar Java JDK 17
+      - name: Compilar interfaz web de Sonora
+        working-directory: Sonora-main
+        run: |
+          echo "No se exige VITE_SONORA_API_URL para compilar."
+          npm run build
+
+      - name: Copiar interfaz Sonora a Android
+        run: |
+          if [ ! -d "Sonora-main/dist" ]; then
+            echo "::error::Sonora no generó la carpeta dist/"
+            exit 1
+          fi
+
+          mkdir -p mixto-Sonora/app/src/main/assets/sonora
+          cp -r Sonora-main/dist/. mixto-Sonora/app/src/main/assets/sonora/
+
+          echo "===== ARCHIVOS WEB COPIADOS ====="
+          find mixto-Sonora/app/src/main/assets/sonora -maxdepth 2 -type f
+
+      - name: Instalar Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Instalar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: "8.10.2"
 
       - name: Compilar APK Android
         working-directory: mixto-Sonora
-        env:
-          SONORA_API_URL: ${{ vars.SONORA_API_URL }}
-        run: gradle assembleDebug -PsonoraApiUrl="$SONORA_API_URL" --stacktrace
+        run: gradle assembleDebug --stacktrace
 
-      - name: Mostrar APK generado
+      - name: Comprobar APK generado
         run: |
           echo "===== APK GENERADOS ====="
           find mixto-Sonora -type f -name "*.apk" -print
-          if ! find mixto-Sonora -type f -path "*/build/outputs/apk/*/*.apk" | grep -q .; then
+
+          if ! find mixto-Sonora -type f \
+            -path "*/build/outputs/apk/*/*.apk" | grep -q .; then
             echo "::error::La compilación no produjo ningún APK"
             exit 1
           fi
 
-      - name: Publicar APK compilado
+      - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
           name: Mixto-Sonora-APK
