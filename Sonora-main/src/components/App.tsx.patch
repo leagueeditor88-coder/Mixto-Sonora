@@ -1,0 +1,9 @@
+*** Begin Patch
+*** Update File: Sonora-main/src/App.tsx
+@@
+ import { RecentHistory } from './components/RecentHistory';
++import { MixtoLibraryBridge } from './components/MixtoLibraryBridge';
+@@
+       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-8 space-y-8">
++        <MixtoLibraryBridge />
+*** End Patch
