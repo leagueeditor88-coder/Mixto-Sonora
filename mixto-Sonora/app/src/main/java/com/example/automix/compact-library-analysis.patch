@@ -1,0 +1,229 @@
+diff --git a/mixto-Sonora/app/src/main/java/com/example/automix/MainActivity.kt b/mixto-Sonora/app/src/main/java/com/example/automix/MainActivity.kt
+index 0000000..0000000 100644
+--- a/mixto-Sonora/app/src/main/java/com/example/automix/MainActivity.kt
++++ b/mixto-Sonora/app/src/main/java/com/example/automix/MainActivity.kt
+@@ -1458,22 +1458,22 @@ fun TrackItem(track: Track, bpm: Int?, key: String?, playing: Boolean, onClick: () -> Unit) {
+-        shape = RoundedCornerShape(12.dp),
++        shape = RoundedCornerShape(10.dp),
+         colors = CardDefaults.cardColors(containerColor = if (playing) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
+         elevation = CardDefaults.cardElevation(1.dp),
+         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+     ) {
+-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
++        Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+             Box(
+-                Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
++                Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+                 contentAlignment = Alignment.Center
+-            ) { Icon(Icons.Default.MusicNote, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) }
+-            Spacer(Modifier.width(12.dp))
++            ) { Icon(Icons.Default.MusicNote, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
++            Spacer(Modifier.width(9.dp))
+             Column(Modifier.weight(1f)) {
+-                Text(track.title, fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+-                Text(track.artist, fontSize = 12.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                Text(track.title, fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                Text(track.artist, fontSize = 11.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+             }
+             Column(horizontalAlignment = Alignment.End) {
+-                Text(bpm?.toString() ?: "—", fontSize = 12.sp, color = Color.Gray)
+-                Text(key?.let { shortKey(it) } ?: "—", fontSize = 12.sp, color = Color.Gray)
++                Text(bpm?.toString() ?: "—", fontSize = 11.sp, color = Color.Gray)
++                Text(key?.let { shortKey(it) } ?: "—", fontSize = 11.sp, color = Color.Gray)
+             }
+         }
+     }
+ }
+@@ -1660,6 +1660,10 @@ fun LibraryScreen(
+     var gridMode by remember(selectedTab) {
+         mutableStateOf(libraryPrefs.getBoolean("library_grid_$selectedTab", selectedTab == 1 || selectedTab == 3))
+     }
++    // Contraído por defecto para dejar más espacio visible a la biblioteca.
++    var genreAnalysisExpanded by remember {
++        mutableStateOf(libraryPrefs.getBoolean("genre_analysis_expanded", false))
++    }
+ 
+     val filtered = remember(
+         state.tracks, state.searchQuery, state.filterArtist,
+@@ -1702,17 +1706,19 @@ fun LibraryScreen(
+ 
+     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+-        ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 8.dp) {
++        ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 6.dp) {
+             tabs.forEachIndexed { index, title ->
+                 Tab(selected = selectedTab == index, onClick = {
+                     selectedTab = index
+                     libraryPrefs.edit().putInt("library_tab", index).apply()
+                     selectedFolder = null; selectedAlbum = null; selectedArtist = null; selectedGenre = null
+-                }, text = { Text(title, maxLines = 1) })
++                }, text = { Text(title, fontSize = 12.sp, maxLines = 1) })
+             }
+         }
+         OutlinedTextField(
+             value = state.searchQuery, onValueChange = onSearchChange,
+-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+-            placeholder = { Text("Buscar canciones, artistas, álbumes…") },
+-            leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true
++            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
++            placeholder = { Text("Buscar canciones, artistas, álbumes…", fontSize = 12.sp) },
++            leadingIcon = { Icon(Icons.Default.Search, null, modifier = Modifier.size(19.dp)) },
++            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
++            singleLine = true
+         )
+@@ -1722,16 +1726,16 @@ fun LibraryScreen(
+             Text("Vista", fontSize = 12.sp, color = Color.Gray)
+             FilterChip(selected = !gridMode, onClick = {
+                 gridMode = false
+                 libraryPrefs.edit().putBoolean("library_grid_$selectedTab", false).apply()
+-            }, label = { Text("Lista") })
++            }, label = { Text("Lista", fontSize = 11.sp) })
+             FilterChip(selected = gridMode, onClick = {
+                 gridMode = true
+                 libraryPrefs.edit().putBoolean("library_grid_$selectedTab", true).apply()
+-            }, label = { Text("Cuadrícula") })
++            }, label = { Text("Cuadrícula", fontSize = 11.sp) })
+             Spacer(Modifier.weight(1f))
+             FilterChip(
+                 selected = state.sortMode == "Aleatorio",
+                 onClick = { onToggleShuffle() },
+-                label = { Text(if (state.sortMode == "Aleatorio") "Aleatorio: ON" else "Aleatorio: OFF") }
++                label = { Text(if (state.sortMode == "Aleatorio") "Aleatorio: ON" else "Aleatorio: OFF", fontSize = 10.sp) }
+             )
+         }
+@@ -1740,6 +1744,7 @@ fun LibraryScreen(
+             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                 Box(Modifier.weight(1f)) {
+-                    OutlinedButton(onClick = { sortExpanded = true }, modifier = Modifier.fillMaxWidth().height(42.dp)) {
+-                        Icon(Icons.Default.Sort, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+-                        Text("Ordenar: ${state.sortField}", maxLines = 1, overflow = TextOverflow.Ellipsis)
++                    OutlinedButton(onClick = { sortExpanded = true }, modifier = Modifier.fillMaxWidth().height(38.dp),
++                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
++                        Icon(Icons.Default.Sort, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp))
++                        Text("Ordenar: ${state.sortField}", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                     }
+@@ -1756,6 +1760,6 @@ fun LibraryScreen(
+                 Spacer(Modifier.width(8.dp))
+                 FilledTonalIconButton(onClick = onToggleSortDirection) {
+-                    Icon(if (state.sortAscending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward, "Cambiar dirección")
++                    Icon(if (state.sortAscending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward, "Cambiar dirección", modifier = Modifier.size(18.dp))
+                 }
+             }
+-            Text("${filtered.size} canciones", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
++            Text("${filtered.size} canciones", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+@@ -1790,3 +1794,4 @@ fun LibraryScreen(
+-            Button(onClick = { onPlayThisOrder(filtered) }, modifier = Modifier.fillMaxWidth().padding(12.dp).height(48.dp), shape = RoundedCornerShape(14.dp)) {
+-                Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Reproducir este orden", fontWeight = FontWeight.Bold)
++            Button(onClick = { onPlayThisOrder(filtered) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).height(42.dp), shape = RoundedCornerShape(12.dp),
++                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
++                Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Reproducir este orden", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+             }
+@@ -1831,28 +1835,82 @@ fun LibraryScreen(
+         } else if (selectedTab == 3) {
+-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), shape = RoundedCornerShape(14.dp)) {
+-                Column(Modifier.padding(12.dp)) {
+-                    Row(verticalAlignment = Alignment.CenterVertically) {
+-                        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary)
+-                        Spacer(Modifier.width(8.dp))
+-                        Column(Modifier.weight(1f)) {
+-                            Text("Identificación musical", fontWeight = FontWeight.Bold)
+-                            Text(state.genreScanStatus, fontSize = 12.sp, color = Color.Gray)
+-                        }
+-                        if (state.genreScanStatus == "Analizando biblioteca…" || state.genreScanStatus == "Sonora: identificando géneros…" || state.genreScanStatus == "Preparando conexión con Sonora…" || state.genreScanStatus == "Preparando análisis…" || state.genreScanStatus == "Pausando…" || state.genreScanStatus == "En espera de conexión" || state.genreScanStatus == "En cola para Sonora") {
+-                            TextButton(onClick = onPauseGenreScan) { Text("Pausar") }
+-                        } else {
+-                            TextButton(onClick = onStartGenreScan) {
+-                                Text(when {
+-                                    state.genreScanStatus == "Pausado" || state.genreScanStatus.startsWith("Error") -> "Reanudar"
+-                                    state.genreScanStatus == "Análisis con Sonora completado" -> "Reanalizar pendientes"
+-                                    else -> "Iniciar"
+-                                })
+-                            }
+-                        }
+-                    }
+-                    val progress = if (state.genreScanTotal > 0) (state.genreScanProcessed.toFloat() / state.genreScanTotal).coerceIn(0f, 1f) else 0f
+-                    LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+-                    Text("${state.genreScanProcessed}/${state.genreScanTotal} revisadas · ${state.genreScanIdentified} identificadas · ${state.genreScanPending} pendientes", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
+-                    Text("Clasificación mediante Sonora: Mixto envía únicamente el título de cada canción a la API de Sonora y guarda el género devuelto. Requiere que Sonora esté publicado y accesible por Internet.", fontSize = 11.sp, color = Color.Gray)
+-                }
+-            }
++            val genreScanActive = state.genreScanStatus == "Analizando biblioteca…" ||
++                state.genreScanStatus == "Sonora: identificando géneros…" ||
++                state.genreScanStatus == "Preparando conexión con Sonora…" ||
++                state.genreScanStatus == "Preparando análisis…" ||
++                state.genreScanStatus == "Pausando…" ||
++                state.genreScanStatus == "En espera de conexión" ||
++                state.genreScanStatus == "En cola para Sonora"
++            val genreScanProgress = if (state.genreScanTotal > 0)
++                (state.genreScanProcessed.toFloat() / state.genreScanTotal).coerceIn(0f, 1f) else 0f
++
++            Card(
++                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
++                shape = RoundedCornerShape(12.dp)
++            ) {
++                Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
++                    Row(verticalAlignment = Alignment.CenterVertically) {
++                        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary,
++                            modifier = Modifier.size(18.dp))
++                        Spacer(Modifier.width(6.dp))
++                        Column(Modifier.weight(1f)) {
++                            Text("Identificación musical", fontWeight = FontWeight.Bold, fontSize = 13.sp)
++                            Text(
++                                state.genreScanStatus,
++                                fontSize = 10.sp,
++                                color = Color.Gray,
++                                maxLines = 1,
++                                overflow = TextOverflow.Ellipsis
++                            )
++                        }
++                        TextButton(
++                            onClick = { if (genreScanActive) onPauseGenreScan() else onStartGenreScan() },
++                            modifier = Modifier.height(30.dp),
++                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
++                        ) {
++                            Text(
++                                when {
++                                    genreScanActive -> "Pausar"
++                                    state.genreScanStatus == "Pausado" || state.genreScanStatus.startsWith("Error") -> "Seguir"
++                                    state.genreScanStatus == "Análisis con Sonora completado" -> "Pendientes"
++                                    else -> "Iniciar"
++                                },
++                                fontSize = 10.sp,
++                                maxLines = 1
++                            )
++                        }
++                        IconButton(
++                            onClick = {
++                                genreAnalysisExpanded = !genreAnalysisExpanded
++                                libraryPrefs.edit().putBoolean("genre_analysis_expanded", genreAnalysisExpanded).apply()
++                            },
++                            modifier = Modifier.size(34.dp)
++                        ) {
++                            Icon(
++                                if (genreAnalysisExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
++                                contentDescription = if (genreAnalysisExpanded) "Contraer análisis" else "Expandir análisis",
++                                modifier = Modifier.size(20.dp)
++                            )
++                        }
++                    }
++                    LinearProgressIndicator(
++                        progress = genreScanProgress,
++                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp)
++                    )
++                    Text(
++                        "${state.genreScanProcessed}/${state.genreScanTotal} · ${state.genreScanIdentified} identificadas · ${state.genreScanPending} pendientes",
++                        fontSize = 10.sp,
++                        color = Color.Gray,
++                        modifier = Modifier.padding(top = 3.dp),
++                        maxLines = 1,
++                        overflow = TextOverflow.Ellipsis
++                    )
++                    if (genreAnalysisExpanded) {
++                        Text(
++                            "Mixto envía el título de cada canción a Sonora y guarda el género devuelto. Se necesita conexión a Internet y que Sonora esté publicado.",
++                            fontSize = 11.sp,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                            modifier = Modifier.padding(top = 6.dp)
++                        )
++                    }
++                }
++            }
