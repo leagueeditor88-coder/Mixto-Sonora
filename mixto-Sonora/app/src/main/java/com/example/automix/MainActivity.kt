@@ -1118,32 +1118,27 @@ fun AutomixApp(
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.Home, null) },
-                    label = { Text("Reproductor") },
+                    icon = { Icon(Icons.Default.Home, contentDescription = "Reproductor") },
                     selected = tab == 0,
                     onClick = { tab = 0 }
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.QueueMusic, null) },
-                    label = { Text("Biblioteca") },
+                    icon = { Icon(Icons.Default.QueueMusic, contentDescription = "Biblioteca") },
                     selected = tab == 1,
                     onClick = { tab = 1 }
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.PlayArrow, null) },
-                    label = { Text("Mashup") },
+                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Mashup") },
                     selected = tab == 2,
                     onClick = { tab = 2 }
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, null) },
-                    label = { Text("Ajustes") },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = "Ajustes") },
                     selected = tab == 3,
                     onClick = { tab = 3 }
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.GraphicEq, null) },
-                    label = { Text("Sonora") },
+                    icon = { Icon(Icons.Default.GraphicEq, contentDescription = "Sonora") },
                     selected = false,
                     onClick = { appContext.startActivity(Intent(appContext, SonoraActivity::class.java)) }
                 )
@@ -1665,6 +1660,7 @@ fun LibraryScreen(
     val context = LocalContext.current
     val libraryPrefs = remember(context) { context.getSharedPreferences("automix", Context.MODE_PRIVATE) }
     var selectedTab by remember { mutableIntStateOf(libraryPrefs.getInt("library_tab", 0).coerceIn(0, 4)) }
+    var genrePanelExpanded by remember { mutableStateOf(false) }
     var selectedFolder by remember { mutableStateOf<String?>(null) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var selectedArtist by remember { mutableStateOf<String?>(null) }
@@ -1833,31 +1829,43 @@ fun LibraryScreen(
                 }
             }
         } else if (selectedTab == 3) {
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), shape = RoundedCornerShape(14.dp)) {
-                Column(Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary)
+            Card(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { genrePanelExpanded = !genrePanelExpanded },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Identificación musical", fontWeight = FontWeight.Bold)
-                            Text(state.genreScanStatus, fontSize = 12.sp, color = Color.Gray)
+                            Text("Identificación musical", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(state.genreScanStatus, fontSize = 11.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (state.genreScanStatus == "Analizando biblioteca…" || state.genreScanStatus == "Sonora: identificando géneros…" || state.genreScanStatus == "Preparando conexión con Sonora…" || state.genreScanStatus == "Preparando análisis…" || state.genreScanStatus == "Pausando…" || state.genreScanStatus == "En espera de conexión" || state.genreScanStatus == "En cola para Sonora") {
-                            TextButton(onClick = onPauseGenreScan) { Text("Pausar") }
+                            TextButton(onClick = onPauseGenreScan, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("Pausar", fontSize = 12.sp) }
                         } else {
-                            TextButton(onClick = onStartGenreScan) {
+                            TextButton(onClick = onStartGenreScan, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                                 Text(when {
                                     state.genreScanStatus == "Pausado" || state.genreScanStatus.startsWith("Error") -> "Reanudar"
-                                    state.genreScanStatus == "Análisis con Sonora completado" -> "Reanalizar pendientes"
+                                    state.genreScanStatus == "Análisis con Sonora completado" -> "Pendientes"
                                     else -> "Iniciar"
-                                })
+                                }, fontSize = 12.sp)
                             }
                         }
+                        Icon(if (genrePanelExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (genrePanelExpanded) "Contraer" else "Expandir")
                     }
-                    val progress = if (state.genreScanTotal > 0) (state.genreScanProcessed.toFloat() / state.genreScanTotal).coerceIn(0f, 1f) else 0f
-                    LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                    Text("${state.genreScanProcessed}/${state.genreScanTotal} revisadas · ${state.genreScanIdentified} identificadas · ${state.genreScanPending} pendientes", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
-                    Text("Clasificación mediante Sonora: Mixto envía únicamente el título de cada canción a la API de Sonora y guarda el género devuelto. Requiere que Sonora esté publicado y accesible por Internet.", fontSize = 11.sp, color = Color.Gray)
+                    if (genrePanelExpanded) {
+                        val progress = if (state.genreScanTotal > 0) (state.genreScanProcessed.toFloat() / state.genreScanTotal).coerceIn(0f, 1f) else 0f
+                        LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().padding(top = 7.dp))
+                        Text("${state.genreScanProcessed}/${state.genreScanTotal} revisadas · ${state.genreScanIdentified} identificadas · ${state.genreScanPending} pendientes",
+                            fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(top = 5.dp))
+                        Text("Mixto envía el título de cada canción a Sonora y guarda el género devuelto. Requiere que Sonora esté publicado y accesible por Internet.",
+                            fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    }
                 }
             }
             if (selectedGenre != null) {
