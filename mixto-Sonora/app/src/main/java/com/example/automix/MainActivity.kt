@@ -84,6 +84,9 @@ class MainActivity : ComponentActivity() {
     private var svc: AutomixService? = null
     private var allTracks: List<Track> = emptyList()
     private var filteredTracks: List<Track> = emptyList()
+    // Cola lógica de la sesión: conserva el álbum/artista/género elegido aunque cambie de pestaña o filtro.
+    private var playbackScope: List<Track> = emptyList()
+    private var playbackShuffleEnabled: Boolean = false
     private var randomRank: Map<String, Int> = emptyMap()
     private val bpmCache = ConcurrentHashMap<String, Int>()
     private val keyCache = ConcurrentHashMap<String, String>()
@@ -113,6 +116,7 @@ class MainActivity : ComponentActivity() {
         val isPaused: Boolean = false,
         val automixEnabled: Boolean = false,
         val sortMode: String = "Aleatorio",
+        val shuffleEnabled: Boolean = false,
         val statusText: String = "",
         val analysisText: String = "Biblioteca: esperando permiso para analizar",
         val folders: Set<String> = emptySet(),
@@ -170,9 +174,8 @@ class MainActivity : ComponentActivity() {
             s.transitionStyle = transitionStyle
             s.onChange = { refreshNow() }
             svc = s
-            s.setRandomSelectionEnabled(sortMode == SORT_RANDOM)
+            s.setRandomSelectionEnabled(if (playbackScope.isNotEmpty()) playbackShuffleEnabled else sortMode == SORT_RANDOM)
             s.updateMusicAnalysis(bpmCache.toMap(), keyCache.toMap())
-            if (filteredTracks.isNotEmpty()) s.reorderQueue(buildDisplayList())
             refreshNow()
         }
         override fun onServiceDisconnected(name: ComponentName?) { svc = null }
@@ -218,6 +221,7 @@ class MainActivity : ComponentActivity() {
             it.copy(
                 percent = percent, fadeSec = fade, skipSec = skip,
                 transition = transitionStyle, sortMode = sortMode,
+                shuffleEnabled = sortMode == SORT_RANDOM,
                 folders = selectedFolders, bpmMap = bpmCache.toMap(), keyMap = keyCache.toMap(),
                 sortField = prefs.getString("library_sort_field", "Título") ?: "Título",
                 sortAscending = prefs.getBoolean("library_sort_ascending", true),
@@ -235,7 +239,7 @@ class MainActivity : ComponentActivity() {
                     onNext = { svc?.next() },
                     onPrev = { svc?.previous() },
                     onStop = { svc?.stopAll(); refreshNow() },
-                    onPlayTrack = { idx -> playAt(idx) },
+                    onPlayTrack = { track -> playTrackInActiveScope(track) },
                     onStartAutomix = { toggleAutomix() },
                     onSetSort = { mode -> selectSort(mode) },
                     onToggleShuffle = { toggleShuffle() },
@@ -293,24 +297,11 @@ class MainActivity : ComponentActivity() {
                     onFilterGenre = { g -> pushState { it.copy(filterGenre = g) } },
                     onSeek = { ms -> svc?.seekTo(ms) },
                     onPlayFiltered = { list, idx ->
-                        if (list.isNotEmpty()) {
-                            startForegroundService(Intent(this, AutomixService::class.java))
-                            svc?.let {
-                                it.playPercent = percent; it.fadeSec = fade; it.skipIntroSec = skip
-                                it.transitionStyle = transitionStyle
-                                it.startOrdered(list, idx)
-                            }
-                        }
+                        val shuffle = if (svc?.isRunning == true && playbackScope.isNotEmpty()) playbackShuffleEnabled else sortMode == SORT_RANDOM
+                        startScopedPlayback(list, idx, shuffle)
                     },
-                    onPlayThisOrder = { list ->
-                        if (list.isNotEmpty()) {
-                            startForegroundService(Intent(this, AutomixService::class.java))
-                            svc?.let {
-                                it.playPercent = percent; it.fadeSec = fade; it.skipIntroSec = skip
-                                it.transitionStyle = transitionStyle
-                                it.startOrdered(list, 0)
-                            }
-                        }
+                    onPlayThisOrder = { list, shuffle ->
+                        startScopedPlayback(list, 0, shuffle)
                     },
                     onReshuffleQueue = { reshuffleQueueHot() }
                 )
@@ -345,7 +336,7 @@ class MainActivity : ComponentActivity() {
         val genreCache = readGenreCache()
         val proj = arrayOf(
     Media._ID, Media.TITLE, Media.ARTIST, Media.DURATION, Media.DATA,
-    Media.ALBUM, Media.ALBUM_ID, Media.DATE_MODIFIED
+    Media.ALBUM, Media.ALBUM_ID, Media.DATE_MODIFIED, Media.TRACK
 )
 // Forzar columna ALBUM_ID si existe
         contentResolver.query(
@@ -361,6 +352,7 @@ class MainActivity : ComponentActivity() {
             val iAlbum = c.getColumnIndex(Media.ALBUM)
             val iAlbumId = c.getColumnIndex(Media.ALBUM_ID)
             val iDateModified = c.getColumnIndex(Media.DATE_MODIFIED)
+            val iTrackNumber = c.getColumnIndex(Media.TRACK)
             while (c.moveToNext()) {
                 val path = if (iData >= 0) c.getString(iData) else null
                 val album = if (iAlbum >= 0) c.getString(iAlbum) ?: "" else ""
@@ -378,7 +370,8 @@ class MainActivity : ComponentActivity() {
                     album,
                     genre,
                     albumId,
-                    if (iDateModified >= 0 && !c.isNull(iDateModified)) c.getLong(iDateModified) * 1000L else 0L
+                    if (iDateModified >= 0 && !c.isNull(iDateModified)) c.getLong(iDateModified) * 1000L else 0L,
+                    if (iTrackNumber >= 0 && !c.isNull(iTrackNumber)) c.getInt(iTrackNumber) else 0
                 )
             }
         }
@@ -397,8 +390,8 @@ class MainActivity : ComponentActivity() {
         val valid = selectedFolders.filter { f -> allTracks.any { it.folder == f } }.toSet()
         filteredTracks = if (valid.isEmpty()) allTracks else allTracks.filter { it.folder in valid }
         pushState { it.copy(folders = valid) }
-        val display = buildDisplayList()
-        svc?.reorderQueue(display)
+        // La vista de biblioteca puede cambiar, pero la cola activa no debe expandirse
+        // ni saltar a otras colecciones por cambiar un filtro.
         refreshNow()
     }
 
@@ -430,11 +423,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun toggleShuffle() {
-        val nextMode = if (sortMode == SORT_RANDOM) SORT_RECENT else SORT_RANDOM
+        val currentlyShuffling = if (svc?.isRunning == true && playbackScope.isNotEmpty()) playbackShuffleEnabled else sortMode == SORT_RANDOM
+        val shuffle = !currentlyShuffling
+        val nextMode = if (shuffle) SORT_RANDOM else lastManualSort
         selectSort(nextMode)
-        // El cambio explícito de aleatorio sí actualiza la cola activa; los cambios
-        // de orden visual de la biblioteca no deben hacerlo.
-        svc?.reorderQueue(buildDisplayList())
+        val s = svc
+        if (s?.isRunning == true && playbackScope.isNotEmpty()) {
+            val currentUri = s.current?.uri
+            val currentTrack = playbackScope.firstOrNull { it.uri == currentUri }
+            // Solo cambiamos el orden si la pista activa pertenece a esta sesión.
+            // Así nunca se inserta otra canción/colección por efecto secundario.
+            if (currentTrack != null) {
+                val queue = if (shuffle) {
+                    listOf(currentTrack) + playbackScope.filter { it.uri != currentUri }.shuffled()
+                } else playbackScope
+                s.reorderQueue(queue)
+                playbackShuffleEnabled = shuffle
+            }
+        }
+        refreshNow()
     }
 
     private fun selectSort(mode: String) {
@@ -536,6 +543,8 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this, "No hay canciones cargadas", Toast.LENGTH_SHORT).show()
                 return
             }
+            playbackScope = display.distinctBy { it.uri.toString() }
+            playbackShuffleEnabled = sortMode == SORT_RANDOM
             startForegroundService(Intent(this, AutomixService::class.java))
             s.startAutomix(display, 0)
         }
@@ -544,16 +553,49 @@ class MainActivity : ComponentActivity() {
     }
 
 private fun playAt(index: Int) {
-        val display = buildDisplayList()
-        if (display.isEmpty()) {
-            Toast.makeText(this, "No hay canciones cargadas", Toast.LENGTH_SHORT).show()
+        val shuffle = if (svc?.isRunning == true && playbackScope.isNotEmpty()) playbackShuffleEnabled else sortMode == SORT_RANDOM
+        startScopedPlayback(buildDisplayList(), index, shuffle)
+    }
+
+    /** Inicia una cola cerrada sobre la colección elegida, sin mezclarla con la biblioteca completa. */
+    private fun startScopedPlayback(list: List<Track>, startIndex: Int, shuffle: Boolean) {
+        val scope = list.distinctBy { it.uri.toString() }
+        if (scope.isEmpty()) {
+            Toast.makeText(this, "No hay canciones para reproducir", Toast.LENGTH_SHORT).show()
             return
         }
+        val safeIndex = startIndex.coerceIn(0, scope.lastIndex)
+        playbackScope = scope
+        playbackShuffleEnabled = shuffle
+        pushState { it.copy(shuffleEnabled = shuffle) }
+        val ordered = if (shuffle) {
+            val first = scope[safeIndex]
+            listOf(first) + scope.filter { it.uri != first.uri }.shuffled()
+        } else scope
+        val initialIndex = if (shuffle) 0 else safeIndex
+
         startForegroundService(Intent(this, AutomixService::class.java))
         svc?.let {
-            it.playPercent = percent; it.fadeSec = fade; it.skipIntroSec = skip
+            it.playPercent = percent
+            it.fadeSec = fade
+            it.skipIntroSec = skip
             it.transitionStyle = transitionStyle
-            it.startOrdered(display, index.coerceAtLeast(0))
+            it.setRandomSelectionEnabled(shuffle)
+            it.startOrdered(ordered, initialIndex)
+        }
+        refreshNow()
+    }
+
+    /** Reproduce un elemento de la cola actual; no vuelve a la lista global por accidente. */
+    private fun playTrackInActiveScope(track: Track) {
+        val scope = playbackScope.ifEmpty { buildDisplayList() }
+        val index = scope.indexOfFirst { it.uri == track.uri }
+        if (index >= 0) {
+            startScopedPlayback(scope, index, playbackShuffleEnabled)
+        } else {
+            val fallback = buildDisplayList()
+            val fallbackIndex = fallback.indexOfFirst { it.uri == track.uri }
+            if (fallbackIndex >= 0) startScopedPlayback(fallback, fallbackIndex, sortMode == SORT_RANDOM)
         }
     }
 
@@ -563,12 +605,19 @@ private fun playAt(index: Int) {
             Toast.makeText(this, "Reproduce algo primero", Toast.LENGTH_SHORT).show()
             return
         }
+        val scope = playbackScope.ifEmpty { filteredTracks }
         val currentUri = s.current?.uri
-        val currentTrack = filteredTracks.firstOrNull { it.uri == currentUri }
-        val others = filteredTracks.filter { it.uri != currentUri }.shuffled()
-        val newQueue = if (currentTrack != null) listOf(currentTrack) + others else others
+        val currentTrack = scope.firstOrNull { it.uri == currentUri }
+        if (currentTrack == null) {
+            Toast.makeText(this, "La pista activa no pertenece a esta colección", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val others = scope.filter { it.uri != currentUri }.shuffled()
+        val newQueue = listOf(currentTrack) + others
         s.reorderQueue(newQueue)
-        Toast.makeText(this, "🔀 Cola re-barajada (${others.size} canciones)", Toast.LENGTH_SHORT).show()
+        playbackScope = scope
+        playbackShuffleEnabled = true
+        Toast.makeText(this, "🔀 Cola re-barajada dentro de la colección (${others.size} canciones)", Toast.LENGTH_SHORT).show()
         refreshNow()
     }
 
@@ -618,6 +667,9 @@ private fun playAt(index: Int) {
             return
         }
         val shuffled = shuffleWithBpmVariety(filteredTracks)
+        playbackScope = filteredTracks.distinctBy { it.uri.toString() }
+        playbackShuffleEnabled = true
+        pushState { it.copy(shuffleEnabled = true) }
         startForegroundService(Intent(this, AutomixService::class.java))
         svc?.let {
             it.playPercent = percent
@@ -697,7 +749,18 @@ private fun playAt(index: Int) {
             runOnUiThread {
                 pushState { it.copy(analysisText = "Análisis terminado · BPM ${bpmCache.size} · tonalidades ${keyCache.size}") }
                 if (sortMode == SORT_BPM || sortMode == SORT_SMART) {
-                    svc?.reorderQueue(buildDisplayList())
+                    val scope = playbackScope.ifEmpty { buildDisplayList() }
+                    val orderedScope = if (sortMode == SORT_BPM) {
+                        scope.sortedWith(Comparator { a, b ->
+                            val x = bpmCache[a.uri.toString()] ?: Int.MAX_VALUE
+                            val y = bpmCache[b.uri.toString()] ?: Int.MAX_VALUE
+                            if (x != y) x.compareTo(y) else collator.compare(a.title, b.title)
+                        })
+                    } else smartReorder(scope.sortedWith(Comparator { a, b -> collator.compare(a.title, b.title) }))
+                    val currentUri = svc?.current?.uri
+                    if (orderedScope.isNotEmpty() && (currentUri == null || orderedScope.any { it.uri == currentUri })) {
+                        svc?.reorderQueue(orderedScope)
+                    }
                     refreshNow()
                 }
             }
@@ -1071,7 +1134,7 @@ fun AutomixApp(
     onNext: () -> Unit,
     onPrev: () -> Unit,
     onStop: () -> Unit,
-    onPlayTrack: (Int) -> Unit,
+    onPlayTrack: (Track) -> Unit,
     onStartAutomix: () -> Unit,
     onSetSort: (String) -> Unit,
     onToggleShuffle: () -> Unit,
@@ -1099,7 +1162,7 @@ fun AutomixApp(
     onFilterGenre: (String) -> Unit,
     onSeek: (Int) -> Unit,
     onPlayFiltered: (List<Track>, Int) -> Unit,
-    onPlayThisOrder: (List<Track>) -> Unit
+    onPlayThisOrder: (List<Track>, Boolean) -> Unit
 ) {
     val appContext = LocalContext.current
     // Preferencias locales de Automix; se declaran en el mismo ámbito que el formulario de Ajustes.
@@ -1116,7 +1179,22 @@ fun AutomixApp(
             )
         },
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            Column {
+                state.current?.let { track ->
+                    PersistentMiniPlayer(
+                        track = track,
+                        isPlaying = state.isPlaying,
+                        positionMs = state.positionMs,
+                        durationMs = state.durationMs,
+                        onOpenPlayer = { tab = 0 },
+                        shuffleEnabled = state.shuffleEnabled,
+                        onToggleShuffle = onToggleShuffle,
+                        onPrevious = onPrev,
+                        onPlayPause = onPlayPause,
+                        onNext = onNext
+                    )
+                }
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.Home, contentDescription = "Reproductor") },
                     selected = tab == 0,
@@ -1142,6 +1220,7 @@ fun AutomixApp(
                     selected = false,
                     onClick = { appContext.startActivity(Intent(appContext, SonoraActivity::class.java)) }
                 )
+                }
             }
         }
     ) { pad ->
@@ -1209,7 +1288,7 @@ fun PlayerScreen(
     onNext: () -> Unit,
     onPrev: () -> Unit,
     onStop: () -> Unit,
-    onPlayTrack: (Int) -> Unit,
+    onPlayTrack: (Track) -> Unit,
     onStartAutomix: () -> Unit,
     onSetSort: (String) -> Unit,
     onToggleShuffle: () -> Unit,
@@ -1365,10 +1444,7 @@ fun PlayerScreen(
                     totalCount = state.upcomingQueue.size,
                     bpmMap = state.bpmMap,
                     keyMap = state.keyMap,
-                    onPlayTrack = { track ->
-                        val idx = state.tracks.indexOfFirst { it.uri == track.uri }
-                        if (idx >= 0) onPlayTrack(idx)
-                    }
+                    onPlayTrack = onPlayTrack
                 )
             }
         }
@@ -1381,7 +1457,7 @@ fun PlayerScreen(
                 ModeButton(
                     "Aleatorio",
                     Icons.Default.Shuffle,
-                    state.sortMode == "Aleatorio",
+                    state.shuffleEnabled,
                     Modifier.fillMaxWidth(),
                     Color(0xFFFF9800)
                 ) { onToggleShuffle() }
@@ -1471,10 +1547,7 @@ fun TrackItem(track: Track, bpm: Int?, key: String?, playing: Boolean, onClick: 
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
     ) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) { Icon(Icons.Default.MusicNote, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) }
+            AlbumArt(track.albumId, 48.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(track.title, fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1484,6 +1557,80 @@ fun TrackItem(track: Track, bpm: Int?, key: String?, playing: Boolean, onClick: 
                 Text(bpm?.toString() ?: "—", fontSize = 12.sp, color = Color.Gray)
                 Text(key?.let { shortKey(it) } ?: "—", fontSize = 12.sp, color = Color.Gray)
             }
+        }
+    }
+}
+
+@Composable
+fun CollectionPlaybackControls(
+    count: Int,
+    normalLabel: String,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilledTonalButton(onClick = onPlay, enabled = count > 0, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Default.PlayArrow, null)
+            Spacer(Modifier.width(5.dp))
+            Text(normalLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Button(onClick = onShuffle, enabled = count > 0, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Default.Shuffle, null)
+            Spacer(Modifier.width(5.dp))
+            Text("Aleatorio", maxLines = 1)
+        }
+    }
+}
+
+@Composable
+fun PersistentMiniPlayer(
+    track: Track,
+    isPlaying: Boolean,
+    positionMs: Int,
+    durationMs: Int,
+    shuffleEnabled: Boolean,
+    onOpenPlayer: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onPrevious: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit
+) {
+    val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp).clickable(onClick = onOpenPlayer),
+        shape = RoundedCornerShape(14.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 9.dp, end = 3.dp, top = 7.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AlbumArt(track.albumId, 44.dp)
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(track.title, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(track.artist, fontSize = 10.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onClick = onToggleShuffle, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Default.Shuffle, contentDescription = if (shuffleEnabled) "Aleatorio activado" else "Activar aleatorio",
+                        tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else Color.Gray, modifier = Modifier.size(19.dp))
+                }
+                IconButton(onClick = onPrevious, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = "Anterior", modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = onPlayPause, modifier = Modifier.size(38.dp)) {
+                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pausar" else "Reproducir", modifier = Modifier.size(23.dp))
+                }
+                IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "Siguiente", modifier = Modifier.size(20.dp))
+                }
+            }
+            LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(2.dp))
         }
     }
 }
@@ -1650,7 +1797,7 @@ fun LibraryScreen(
     onFilterAlbum: (String) -> Unit,
     onFilterGenre: (String) -> Unit,
     onPlayTrack: (List<Track>, Int) -> Unit,
-    onPlayThisOrder: (List<Track>) -> Unit,
+    onPlayThisOrder: (List<Track>, Boolean) -> Unit,
     onSetSort: (String) -> Unit,
     onToggleShuffle: () -> Unit,
     onStartGenreScan: () -> Unit,
@@ -1698,7 +1845,12 @@ fun LibraryScreen(
         }
     }
     val artists = remember(filtered) { filtered.groupBy { it.artist }.toSortedMap(String.CASE_INSENSITIVE_ORDER) }
-    val albums = remember(filtered) { filtered.groupBy { if (it.album.isBlank()) "Álbum desconocido" else it.album }.toSortedMap(String.CASE_INSENSITIVE_ORDER) }
+    val albums = remember(filtered) {
+        filtered.groupBy { track ->
+            val albumName = track.album.ifBlank { "Álbum desconocido" }
+            "$albumName\u001F${track.artist}"
+        }.toSortedMap(String.CASE_INSENSITIVE_ORDER)
+    }
     val genres = remember(filtered) { filtered.groupBy { if (it.genre.isBlank()) "Género desconocido" else it.genre }.toSortedMap(String.CASE_INSENSITIVE_ORDER) }
     val folders = remember(filtered) { filtered.groupBy { it.folder.ifBlank { "Música" } }.toSortedMap(String.CASE_INSENSITIVE_ORDER) }
 
@@ -1734,9 +1886,9 @@ fun LibraryScreen(
             }, label = { Text("Cuadrícula") })
             Spacer(Modifier.weight(1f))
             FilterChip(
-                selected = state.sortMode == "Aleatorio",
+                selected = state.shuffleEnabled,
                 onClick = { onToggleShuffle() },
-                label = { Text(if (state.sortMode == "Aleatorio") "Aleatorio: ON" else "Aleatorio: OFF") }
+                label = { Text(if (state.shuffleEnabled) "Aleatorio: ON" else "Aleatorio: OFF") }
             )
         }
         if (selectedTab == 0) {
@@ -1780,27 +1932,44 @@ fun LibraryScreen(
                     }
                 }
             }
-            Button(onClick = { onPlayThisOrder(filtered) }, modifier = Modifier.fillMaxWidth().padding(12.dp).height(48.dp), shape = RoundedCornerShape(14.dp)) {
-                Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Reproducir este orden", fontWeight = FontWeight.Bold)
+            Button(onClick = { onPlayThisOrder(filtered, state.shuffleEnabled) }, modifier = Modifier.fillMaxWidth().padding(12.dp).height(48.dp), shape = RoundedCornerShape(14.dp)) {
+                Icon(if (state.shuffleEnabled) Icons.Default.Shuffle else Icons.Default.PlayArrow, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (state.shuffleEnabled) "Reproducir en aleatorio" else "Reproducir este orden", fontWeight = FontWeight.Bold)
             }
         } else if (selectedTab == 1) {
             if (selectedAlbum != null) {
+                val albumTracks = albums[selectedAlbum].orEmpty().sortedWith(
+                    compareBy<Track> { if (it.trackNumber > 0) 0 else 1 }
+                        .thenBy { it.trackNumber.takeIf { number -> number > 0 } ?: Int.MAX_VALUE }
+                        .thenBy { it.title.lowercase() }
+                )
+                val albumTitle = albumTracks.firstOrNull()?.album?.takeIf { it.isNotBlank() } ?: "Álbum desconocido"
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { selectedAlbum = null }) { Icon(Icons.Default.ArrowBack, "Volver") }
-                    Text(selectedAlbum!!, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f)) {
+                        Text(albumTitle, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(albumTracks.firstOrNull()?.artist ?: "Artista desconocido", fontSize = 11.sp, color = Color.Gray)
+                    }
                 }
-                val albumTracks = albums[selectedAlbum].orEmpty()
+                CollectionPlaybackControls(
+                    count = albumTracks.size,
+                    normalLabel = "Reproducir álbum",
+                    onPlay = { onPlayThisOrder(albumTracks, false) },
+                    onShuffle = { onPlayThisOrder(albumTracks, true) }
+                )
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp)) {
                     items(albumTracks, key = { it.uri.toString() }) { t -> TrackItem(t, state.bpmMap[t.uri.toString()], state.keyMap[t.uri.toString()], state.current?.uri == t.uri) { onPlayTrack(albumTracks, albumTracks.indexOf(t)) } }
                 }
             } else if (gridMode) {
                 LazyVerticalGrid(GridCells.Adaptive(145.dp), Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    gridItems(albums.keys.toList(), key = { it }) { album ->
-                        val list = albums[album].orEmpty(); val sample = list.firstOrNull()
-                        Card(modifier = Modifier.fillMaxWidth().clickable { selectedAlbum = album }, shape = RoundedCornerShape(14.dp)) {
+                    gridItems(albums.keys.toList(), key = { it }) { albumKey ->
+                        val list = albums[albumKey].orEmpty(); val sample = list.firstOrNull()
+                        val albumTitle = sample?.album?.takeIf { it.isNotBlank() } ?: "Álbum desconocido"
+                        Card(modifier = Modifier.fillMaxWidth().clickable { selectedAlbum = albumKey }, shape = RoundedCornerShape(14.dp)) {
                             Column(Modifier.padding(10.dp)) {
                                 if (sample != null) AlbumArt(sample.albumId, 120.dp) else Icon(Icons.Default.Album, null, modifier = Modifier.size(120.dp))
-                                Spacer(Modifier.height(8.dp)); Text(album, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Spacer(Modifier.height(8.dp)); Text(albumTitle, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 Text("${list.firstOrNull()?.artist ?: "Artista desconocido"} · ${list.size} temas", fontSize = 11.sp, color = Color.Gray, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
@@ -1808,13 +1977,19 @@ fun LibraryScreen(
                 }
             } else {
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    albums.forEach { (album, list) -> item(key = album) { Card(Modifier.fillMaxWidth().clickable { selectedAlbum = album }) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { val sample = list.firstOrNull(); if (sample != null) AlbumArt(sample.albumId, 52.dp) else Icon(Icons.Default.Album, null, modifier = Modifier.size(52.dp)); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(album, fontWeight = FontWeight.SemiBold); Text("${list.firstOrNull()?.artist ?: "Artista desconocido"} · ${list.size} temas", fontSize = 12.sp, color = Color.Gray) }; Icon(Icons.Default.ChevronRight, null) } } } }
+                    albums.forEach { (albumKey, list) -> item(key = albumKey) { Card(Modifier.fillMaxWidth().clickable { selectedAlbum = albumKey }) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { val sample = list.firstOrNull(); if (sample != null) AlbumArt(sample.albumId, 52.dp) else Icon(Icons.Default.Album, null, modifier = Modifier.size(52.dp)); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(sample?.album?.takeIf { it.isNotBlank() } ?: "Álbum desconocido", fontWeight = FontWeight.SemiBold); Text("${sample?.artist ?: "Artista desconocido"} · ${list.size} temas", fontSize = 12.sp, color = Color.Gray) }; Icon(Icons.Default.ChevronRight, null) } } } }
                 }
             }
         } else if (selectedTab == 2) {
             if (selectedArtist != null) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = { selectedArtist = null }) { Icon(Icons.Default.ArrowBack, "Volver") }; Text(selectedArtist!!, fontWeight = FontWeight.Bold) }
                 val artistTracks = artists[selectedArtist].orEmpty()
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = { selectedArtist = null }) { Icon(Icons.Default.ArrowBack, "Volver") }; Text(selectedArtist!!, fontWeight = FontWeight.Bold) }
+                CollectionPlaybackControls(
+                    count = artistTracks.size,
+                    normalLabel = "Reproducir artista",
+                    onPlay = { onPlayThisOrder(artistTracks, false) },
+                    onShuffle = { onPlayThisOrder(artistTracks, true) }
+                )
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp)) { items(artistTracks, key = { it.uri.toString() }) { t -> TrackItem(t, state.bpmMap[t.uri.toString()], state.keyMap[t.uri.toString()], state.current?.uri == t.uri) { onPlayTrack(artistTracks, artistTracks.indexOf(t)) } } }
             } else if (gridMode) {
                 LazyVerticalGrid(GridCells.Adaptive(145.dp), Modifier.weight(1f), contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1869,8 +2044,14 @@ fun LibraryScreen(
                 }
             }
             if (selectedGenre != null) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = { selectedGenre = null }) { Icon(Icons.Default.ArrowBack, "Volver") }; Text(selectedGenre!!, fontWeight = FontWeight.Bold) }
                 val genreTracks = genres[selectedGenre].orEmpty()
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = { selectedGenre = null }) { Icon(Icons.Default.ArrowBack, "Volver") }; Text(selectedGenre!!, fontWeight = FontWeight.Bold) }
+                CollectionPlaybackControls(
+                    count = genreTracks.size,
+                    normalLabel = "Reproducir género",
+                    onPlay = { onPlayThisOrder(genreTracks, false) },
+                    onShuffle = { onPlayThisOrder(genreTracks, true) }
+                )
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp)) { items(genreTracks, key = { it.uri.toString() }) { t -> TrackItem(t, state.bpmMap[t.uri.toString()], state.keyMap[t.uri.toString()], state.current?.uri == t.uri) { onPlayTrack(genreTracks, genreTracks.indexOf(t)) } } }
             } else if (gridMode) {
                 LazyVerticalGrid(GridCells.Adaptive(145.dp), Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

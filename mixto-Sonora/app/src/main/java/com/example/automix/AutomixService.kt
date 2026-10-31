@@ -45,7 +45,8 @@ data class Track(
     val album: String = "",
     val genre: String = "",
     val albumId: Long = -1L,
-    val dateModifiedMs: Long = 0L
+    val dateModifiedMs: Long = 0L,
+    val trackNumber: Int = 0
 )
 
 /**
