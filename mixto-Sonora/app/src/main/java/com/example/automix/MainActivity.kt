@@ -207,6 +207,7 @@ class MainActivity : ComponentActivity() {
         sortMode = prefs.getString("sort_mode", SORT_RECENT) ?: SORT_RECENT
         if (sortMode == SORT_SMART || sortMode == SORT_BPM) sortMode = SORT_RECENT
         lastManualSort = prefs.getString("sort_manual", SORT_TITLE) ?: SORT_TITLE
+        playbackShuffleEnabled = sortMode == SORT_RANDOM
         selectedFolders = prefs.getStringSet("folders", emptySet())?.toSet() ?: emptySet()
         try {
             val bj = JSONObject(prefs.getString("bpm_cache", "{}") ?: "{}")
@@ -221,7 +222,7 @@ class MainActivity : ComponentActivity() {
             it.copy(
                 percent = percent, fadeSec = fade, skipSec = skip,
                 transition = transitionStyle, sortMode = sortMode,
-                shuffleEnabled = sortMode == SORT_RANDOM,
+                shuffleEnabled = if (playbackScope.isNotEmpty()) playbackShuffleEnabled else sortMode == SORT_RANDOM,
                 folders = selectedFolders, bpmMap = bpmCache.toMap(), keyMap = keyCache.toMap(),
                 sortField = prefs.getString("library_sort_field", "Título") ?: "Título",
                 sortAscending = prefs.getBoolean("library_sort_ascending", true),
@@ -990,7 +991,8 @@ private fun playAt(index: Int) {
                 keyMap = keyCache.toMap(),
                 upcomingQueue = upcoming,
                 positionMs = pos,
-                durationMs = dur
+                durationMs = dur,
+                shuffleEnabled = if (playbackScope.isNotEmpty()) playbackShuffleEnabled else sortMode == SORT_RANDOM
             )
         }
     }
@@ -1180,7 +1182,7 @@ fun AutomixApp(
         },
         bottomBar = {
             Column {
-                state.current?.let { track ->
+                if (tab != 0) state.current?.let { track ->
                     PersistentMiniPlayer(
                         track = track,
                         isPlaying = state.isPlaying,
@@ -1508,9 +1510,9 @@ fun ModeButton(
     accentColor: Color = Color(0xFFFF9800),
     onClick: () -> Unit
 ) {
-    // Rojo = modo no seleccionado; cada modo conserva su color distintivo al activarse.
-    val bg = if (selected) accentColor else Color(0xFFD32F2F)
-    val fg = Color.White
+    // El color de acento solo aparece cuando el modo está activado.
+    val bg = if (selected) accentColor else MaterialTheme.colorScheme.surfaceVariant
+    val fg = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = bg,
@@ -1542,7 +1544,7 @@ fun ModeButton(
 fun TrackItem(track: Track, bpm: Int?, key: String?, playing: Boolean, onClick: () -> Unit) {
     Card(
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = if (playing) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = if (playing) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f) else MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(1.dp),
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
     ) {
@@ -1553,34 +1555,15 @@ fun TrackItem(track: Track, bpm: Int?, key: String?, playing: Boolean, onClick: 
                 Text(track.title, fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(track.artist, fontSize = 12.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(bpm?.toString() ?: "—", fontSize = 12.sp, color = Color.Gray)
-                Text(key?.let { shortKey(it) } ?: "—", fontSize = 12.sp, color = Color.Gray)
+            if (playing) {
+                Icon(Icons.Default.GraphicEq, contentDescription = "Reproduciendo", tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 8.dp).size(20.dp))
+            } else {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(bpm?.toString() ?: "—", fontSize = 12.sp, color = Color.Gray)
+                    Text(key?.let { shortKey(it) } ?: "—", fontSize = 12.sp, color = Color.Gray)
+                }
             }
-        }
-    }
-}
-
-@Composable
-fun CollectionPlaybackControls(
-    count: Int,
-    normalLabel: String,
-    onPlay: () -> Unit,
-    onShuffle: () -> Unit
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        FilledTonalButton(onClick = onPlay, enabled = count > 0, modifier = Modifier.weight(1f)) {
-            Icon(Icons.Default.PlayArrow, null)
-            Spacer(Modifier.width(5.dp))
-            Text(normalLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Button(onClick = onShuffle, enabled = count > 0, modifier = Modifier.weight(1f)) {
-            Icon(Icons.Default.Shuffle, null)
-            Spacer(Modifier.width(5.dp))
-            Text("Aleatorio", maxLines = 1)
         }
     }
 }
@@ -1952,12 +1935,6 @@ fun LibraryScreen(
                         Text(albumTracks.firstOrNull()?.artist ?: "Artista desconocido", fontSize = 11.sp, color = Color.Gray)
                     }
                 }
-                CollectionPlaybackControls(
-                    count = albumTracks.size,
-                    normalLabel = "Reproducir álbum",
-                    onPlay = { onPlayThisOrder(albumTracks, false) },
-                    onShuffle = { onPlayThisOrder(albumTracks, true) }
-                )
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp)) {
                     items(albumTracks, key = { it.uri.toString() }) { t -> TrackItem(t, state.bpmMap[t.uri.toString()], state.keyMap[t.uri.toString()], state.current?.uri == t.uri) { onPlayTrack(albumTracks, albumTracks.indexOf(t)) } }
                 }
@@ -1984,12 +1961,6 @@ fun LibraryScreen(
             if (selectedArtist != null) {
                 val artistTracks = artists[selectedArtist].orEmpty()
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = { selectedArtist = null }) { Icon(Icons.Default.ArrowBack, "Volver") }; Text(selectedArtist!!, fontWeight = FontWeight.Bold) }
-                CollectionPlaybackControls(
-                    count = artistTracks.size,
-                    normalLabel = "Reproducir artista",
-                    onPlay = { onPlayThisOrder(artistTracks, false) },
-                    onShuffle = { onPlayThisOrder(artistTracks, true) }
-                )
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp)) { items(artistTracks, key = { it.uri.toString() }) { t -> TrackItem(t, state.bpmMap[t.uri.toString()], state.keyMap[t.uri.toString()], state.current?.uri == t.uri) { onPlayTrack(artistTracks, artistTracks.indexOf(t)) } } }
             } else if (gridMode) {
                 LazyVerticalGrid(GridCells.Adaptive(145.dp), Modifier.weight(1f), contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2046,12 +2017,6 @@ fun LibraryScreen(
             if (selectedGenre != null) {
                 val genreTracks = genres[selectedGenre].orEmpty()
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = { selectedGenre = null }) { Icon(Icons.Default.ArrowBack, "Volver") }; Text(selectedGenre!!, fontWeight = FontWeight.Bold) }
-                CollectionPlaybackControls(
-                    count = genreTracks.size,
-                    normalLabel = "Reproducir género",
-                    onPlay = { onPlayThisOrder(genreTracks, false) },
-                    onShuffle = { onPlayThisOrder(genreTracks, true) }
-                )
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp)) { items(genreTracks, key = { it.uri.toString() }) { t -> TrackItem(t, state.bpmMap[t.uri.toString()], state.keyMap[t.uri.toString()], state.current?.uri == t.uri) { onPlayTrack(genreTracks, genreTracks.indexOf(t)) } } }
             } else if (gridMode) {
                 LazyVerticalGrid(GridCells.Adaptive(145.dp), Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
