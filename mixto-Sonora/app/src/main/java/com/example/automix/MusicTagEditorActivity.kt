@@ -181,7 +181,7 @@ class MusicTagEditorActivity : ComponentActivity() {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 0) }
         fun field(label: String, hint: String, value: String = "") {
             container.addView(TextView(this).apply { text = label; textSize = 13f })
-            val input = EditText(this).apply { this.hint = hint; setText(value); singleLine = true }
+            val input = EditText(this).apply { this.hint = hint; setText(value); setSingleLine(true) }
             container.addView(input); fields[label] = input
         }
         val source = File(cacheDir, "tag_edit_${System.currentTimeMillis()}.${extensionFor(row.uri)}")
