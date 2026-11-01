@@ -62,6 +62,8 @@ android {
 }
 
 dependencies {
+    // Escritura de etiquetas ID3, Vorbis Comments y metadatos de formatos compatibles.
+    implementation("net.jthink:jaudiotagger:3.0.1")
     // Sirve los recursos de Sonora desde un origen HTTPS local compatible con ES modules.
     implementation("androidx.webkit:webkit:1.10.0")
     // Motor de inferencia local GGUF basado en llama.cpp.
