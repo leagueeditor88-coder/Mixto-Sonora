@@ -607,7 +607,6 @@ class MusicTagEditorActivity : ComponentActivity() {
         }
     }
 
-h
     private fun updateGenreCache(
         uri: String,
         genre: String,
