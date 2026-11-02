@@ -386,6 +386,7 @@ class MusicTagEditorActivity : ComponentActivity() {
     }
 
     private fun openEditor(row: TrackRow) {
+        
 
         val fields = linkedMapOf<String, EditText>()
 
@@ -606,6 +607,30 @@ class MusicTagEditorActivity : ComponentActivity() {
             ).show()
         }
     }
+private fun writeAudioTags(
+    uri: Uri,
+    genre: String,
+    subgenres: String
+) {
+    val extension = extensionFor(uri)
+    if (extension == "audio") {
+        throw IllegalArgumentException("Formato no soportado")
+    }
+    val temp = File(cacheDir, "tag_auto_${System.currentTimeMillis()}.$extension")
+    try {
+        copyUriToFile(uri, temp)
+        val audioFile = AudioFileIO.read(temp)
+        val tag = audioFile.tagOrCreateAndSetDefault
+        if (genre.isNotBlank()) tag.setField(FieldKey.GENRE, genre)
+        else tag.deleteField(FieldKey.GENRE)
+        if (subgenres.isNotBlank()) tag.setField(FieldKey.GROUPING, subgenres)
+        else tag.deleteField(FieldKey.GROUPING)
+        AudioFileIO.write(audioFile)
+        writeFileToUri(temp, uri)
+    } finally {
+        temp.delete()
+    }
+}
 
     private fun updateGenreCache(
         uri: String,
